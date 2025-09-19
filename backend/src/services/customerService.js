@@ -3,9 +3,24 @@ const { getPrismaClient } = require('../lib/prisma');
 
 const prisma = getPrismaClient();
 
+const CUSTOMER_PROFILE_SELECT = {
+  id: true,
+  email: true,
+  firstName: true,
+  lastName: true,
+  phoneNumber: true,
+  dateOfBirth: true,
+  lastLoginAt: true,
+};
+
 const authenticateCustomer = async (email, password) => {
   const customer = await prisma.customer.findUnique({
     where: { email },
+    select: {
+      ...CUSTOMER_PROFILE_SELECT,
+      passwordHash: true,
+      isActive: true,
+    },
   });
 
   if (!customer || !customer.isActive) {
@@ -23,10 +38,10 @@ const authenticateCustomer = async (email, password) => {
     data: {
       lastLoginAt: new Date(),
     },
+    select: CUSTOMER_PROFILE_SELECT,
   });
 
-  const { passwordHash, ...safeCustomer } = updatedCustomer;
-  return safeCustomer;
+  return updatedCustomer;
 };
 
 module.exports = {

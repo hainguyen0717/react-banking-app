@@ -38,9 +38,13 @@ The backend uses **PostgreSQL** as the primary data store. PostgreSQL offers rob
 
    The first migration ensures the `pgcrypto` extension is available so UUID identifiers can be generated via `gen_random_uuid()`.
 
-4. Seed at least one customer record for testing. You can use Prisma Studio or run an ad-hoc script. For example:
+4. Seed at least one customer record for testing. Configure the seed variables in `.env` (see `.env.example`) and run the helper script, or open Prisma Studio to manage records manually.
 
    ```bash
+   # Seed a deterministic customer based on the values in your .env file
+   npm run seed
+
+   # Or inspect/edit records through a UI
    npx prisma studio
    ```
 
@@ -72,13 +76,14 @@ The backend uses **PostgreSQL** as the primary data store. PostgreSQL offers rob
 
 ## Login flow
 
-The `/login` endpoint accepts an `email` and `password`, performs a lookup via Prisma against the PostgreSQL database, verifies the password using bcrypt, updates the `lastLoginAt` timestamp, and returns the non-sensitive customer profile data. This ensures all authentication attempts leverage the centralized relational data model.
+The `/login` endpoint accepts an `email` and `password`, performs a lookup via Prisma against the PostgreSQL database, verifies the password using bcrypt, updates the `lastLoginAt` timestamp, and returns only the non-sensitive customer profile fields (ID, email, names, phone, date of birth, and latest login timestamp). This ensures all authentication attempts leverage the centralized relational data model without exposing credential hashes or internal flags.
 
 ## Additional commands
 
 - `npm run prisma:generate`: Regenerate the Prisma client after editing `schema.prisma`.
 - `npm run prisma:migrate:dev`: Create and apply a new migration while developing locally.
 - `npm run prisma:migrate`: Apply migrations without creating new ones (useful for CI/CD).
+- `npm run seed`: Populate or refresh a development customer using the values provided in `.env`.
 
 ## Project structure
 
