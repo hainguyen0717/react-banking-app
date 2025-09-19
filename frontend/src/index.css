@@ -3,6 +3,7 @@
   line-height: 1.5;
   color: #1f2933;
   background-color: #f8fafc;
+  --express-bank-accent: linear-gradient(135deg, #6366f1, #8b5cf6);
 }
 
 body {
