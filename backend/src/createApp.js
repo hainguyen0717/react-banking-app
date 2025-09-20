@@ -1,4 +1,5 @@
 const express = require('express');
+const cors = require('cors');
 const { authenticateCustomer } = require('./services/customerService');
 const { getPrismaClient } = require('./lib/prisma');
 
@@ -33,9 +34,11 @@ function createApp({
 } = {}) {
   const app = express();
 
+  app.use(cors({ origin: 'http://localhost:5173', credentials: true }));
   app.use(express.json());
   app.use(createRequestLogger(logger));
 
+  // ...existing code...
   app.post('/api/login', async (req, res) => {
     const { email, password } = req.body ?? {};
 

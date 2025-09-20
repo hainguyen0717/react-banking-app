@@ -5,10 +5,11 @@ import styles from './Login.module.css';
 interface LoginResponse {
   token: string;
   customerId: string;
-  customerName: string;
+  firstName: string;
+  lastName: string;
 }
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:3001';
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:4000';
 
 export function CustomerLogin() {
   const navigate = useNavigate();
@@ -52,15 +53,15 @@ export function CustomerLogin() {
         return;
       }
 
-      if (!data.customerName) {
-        console.error('Login response did not include a customer name.', { body: data });
+      if (!data.firstName) {
+        console.error('Login response did not include a firstName.', { body: data });
         setError('Unable to complete login. Please try again.');
         return;
       }
 
-      const firstName = data.customerName.trim().split(/\s+/)[0] || data.customerName;
+      const firstName = data.firstName.trim();
 
-      navigate('/welcome', { state: { firstName } });
+  navigate('/welcome', { state: { firstName } });
     } catch (err) {
       console.error('Customer login request failed to reach the API.', err);
       setError('Unable to connect to Express Bank. Please try again.');
