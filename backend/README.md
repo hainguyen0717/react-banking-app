@@ -60,7 +60,7 @@ The backend now uses **SQLite** as the primary data store. SQLite keeps the enti
    npm run dev
    ```
 
-   The server listens on the port defined by the `PORT` environment variable (defaults to `4000`).
+   The server listens on the port defined by the `PORT` environment variable (defaults to `3001`).
 
 ## Customer model
 
@@ -82,7 +82,11 @@ The backend now uses **SQLite** as the primary data store. SQLite keeps the enti
 
 ## Login flow
 
-The `/login` endpoint accepts an `email` and `password`, performs a lookup via Prisma against the SQLite database, verifies the password using bcrypt, updates the `lastLoginAt` timestamp, and returns only the non-sensitive customer profile fields (ID, email, names, phone, date of birth, and latest login timestamp). This ensures all authentication attempts leverage the centralized relational data model without exposing credential hashes or internal flags.
+The `/api/login` endpoint accepts an `email` and `password`, performs a lookup via Prisma against the SQLite database, verifies the password using bcrypt, updates the `lastLoginAt` timestamp, and returns only the non-sensitive customer profile fields (ID, email, names, phone, date of birth, and latest login timestamp). This ensures all authentication attempts leverage the centralized relational data model without exposing credential hashes or internal flags.
+
+## Tests
+
+Run `npm test` to execute integration tests that exercise the login and health check endpoints.
 
 ## Additional commands
 

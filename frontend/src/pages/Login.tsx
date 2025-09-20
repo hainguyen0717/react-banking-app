@@ -46,12 +46,14 @@ export function CustomerLogin() {
         .catch(() => null);
 
       if (!response.ok || !data) {
+        console.warn('Customer login request failed', { status: response.status, body: data });
         const message = data?.message ?? 'Incorrect username/password or user does not exist.';
         setError(message);
         return;
       }
 
       if (!data.customerName) {
+        console.error('Login response did not include a customer name.', { body: data });
         setError('Unable to complete login. Please try again.');
         return;
       }
@@ -60,6 +62,7 @@ export function CustomerLogin() {
 
       navigate('/welcome', { state: { firstName } });
     } catch (err) {
+      console.error('Customer login request failed to reach the API.', err);
       setError('Unable to connect to Express Bank. Please try again.');
     } finally {
       setIsSubmitting(false);
