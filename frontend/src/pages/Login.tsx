@@ -1,18 +1,12 @@
 import { FormEvent, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { apiRequest } from '../lib/api';
+import { CustomerProfile, saveCustomerSession } from '../lib/session';
 import styles from './Login.module.css';
-
-interface LoginResponse {
-  token: string;
-  customerId: string;
-  firstName: string;
-  lastName: string;
-}
-
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:4000';
 
 export function CustomerLogin() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -31,73 +25,65 @@ export function CustomerLogin() {
     setIsSubmitting(true);
 
     try {
-      const response = await fetch(`${API_BASE_URL}/api/login`, {
+      const data = await apiRequest<CustomerProfile>('/api/login', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
         body: JSON.stringify({
           email: trimmedUsername,
           password
         })
       });
-
-      const data: Partial<LoginResponse> & { message?: string } | null = await response
-        .json()
-        .catch(() => null);
-
-      if (!response.ok || !data) {
-        console.warn('Customer login request failed', { status: response.status, body: data });
-        const message = data?.message ?? 'Incorrect username/password or user does not exist.';
-        setError(message);
-        return;
-      }
-
-      if (!data.firstName) {
-        console.error('Login response did not include a firstName.', { body: data });
+      if (!data.id || !data.firstName || !data.email || !data.lastName) {
         setError('Unable to complete login. Please try again.');
         return;
       }
-
-      const firstName = data.firstName.trim();
-
-  navigate('/welcome', { state: { firstName } });
+      saveCustomerSession(data);
+      navigate('/dashboard');
     } catch (err) {
       console.error('Customer login request failed to reach the API.', err);
-      setError('Unable to connect to Express Bank. Please try again.');
+      setError(err instanceof Error ? err.message : 'Unable to connect to Express Bank. Please try again.');
     } finally {
       setIsSubmitting(false);
     }
   };
 
   return (
-    <div className={styles.wrapper}>
-      <section className={styles.card}>
+    <div className={styles.wrapper} data-testid="customer-login-page">
+      <section className={styles.card} data-testid="customer-login-card">
+        <div className={styles.brand} data-testid="customer-login-brand">EXPRESS / BANK</div>
+        <p className={styles.eyebrow} data-testid="customer-login-eyebrow">Customer access</p>
         <h1 data-testid="customer-login-header" className={styles.heading}>
-          Customer Online Banking
+          Banking that stays clear.
         </h1>
+        <p className={styles.intro} data-testid="customer-login-intro">
+          Sign in to view accounts, transfer funds and inspect transaction history.
+        </p>
+        {(location.state as { registered?: boolean } | null)?.registered ? (
+          <p className={styles.success} role="status" data-testid="customer-login-registration-success">
+            Customer created. You can now sign in.
+          </p>
+        ) : null}
         {error ? (
-          <p className={styles.error} role="alert" aria-live="assertive">
+          <p className={styles.error} role="alert" aria-live="assertive" data-testid="customer-login-error">
             {error}
           </p>
         ) : null}
-        <form className={styles.form} onSubmit={handleSubmit} noValidate>
-          <label className={styles.label} htmlFor="username">
-            Username
+        <form className={styles.form} onSubmit={handleSubmit} noValidate data-testid="customer-login-form">
+          <label className={styles.label} htmlFor="username" data-testid="customer-login-email-label">
+            Email
             <input
               id="username"
               name="username"
-              type="text"
+              type="email"
               autoComplete="email"
               className={styles.input}
-              placeholder="Enter your username"
+              placeholder="name@example.com"
               data-testid="customer-login-username"
               value={username}
               onChange={(event) => setUsername(event.target.value)}
               aria-invalid={Boolean(error)}
             />
           </label>
-          <label className={styles.label} htmlFor="password">
+          <label className={styles.label} htmlFor="password" data-testid="customer-login-password-label">
             Password
             <input
               id="password"
@@ -120,14 +106,12 @@ export function CustomerLogin() {
             {isSubmitting ? 'Signing In…' : 'Log In'}
           </button>
         </form>
-        <nav className={styles.links} aria-label="Helpful links">
-          <a className={styles.link} href="#" data-testid="customer-login-forgot-username-link">
-            Forgot username?
-          </a>
-          <a className={styles.link} href="#" data-testid="customer-login-enroll-link">
-            Enroll in online banking
-          </a>
-        </nav>
+        <p className={styles.registerPrompt} data-testid="customer-login-register-prompt">
+          New to Express Bank?{' '}
+          <Link className={styles.link} to="/register" data-testid="customer-login-register-link">
+            Create a customer
+          </Link>
+        </p>
       </section>
     </div>
   );

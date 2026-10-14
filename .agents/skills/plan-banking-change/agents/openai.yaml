@@ -1,0 +1,4 @@
+interface:
+  display_name: "Plan Banking Change"
+  short_description: "Plan full-stack banking app changes"
+  default_prompt: "Use $plan-banking-change to turn this request into an implementation-ready plan."

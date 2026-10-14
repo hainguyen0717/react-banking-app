@@ -1,8 +1,9 @@
 const dotenv = require('dotenv');
-const { createApp } = require('./createApp');
-const { getPrismaClient } = require('./lib/prisma');
 
 dotenv.config();
+
+const { createApp } = require('./createApp');
+const { getPrismaClient } = require('./lib/prisma');
 
 const prisma = getPrismaClient();
 const app = createApp({ prisma });

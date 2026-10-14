@@ -1,0 +1,231 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Express Bank Demo API",
+    "version": "2.0.0",
+    "description": "Deterministic customer, account and transfer APIs for test-tool demonstrations. Customer IDs provide the intentionally simple demo session and ownership context."
+  },
+  "servers": [
+    {
+      "url": "http://localhost:4000",
+      "description": "Local development server"
+    }
+  ],
+  "paths": {
+    "/api/login": {
+      "post": {
+        "summary": "Log in an active customer",
+        "tags": ["Customers"],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/LoginRequest" } } }
+        },
+        "responses": {
+          "200": { "description": "Customer profile", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Customer" } } } },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/customers": {
+      "post": {
+        "summary": "Create a customer",
+        "tags": ["Customers"],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateCustomerRequest" } } }
+        },
+        "responses": {
+          "201": { "description": "Customer created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Customer" } } } },
+          "400": { "$ref": "#/components/responses/Error" },
+          "409": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/customers/{customerId}/accounts": {
+      "parameters": [
+        { "in": "path", "name": "customerId", "required": true, "schema": { "type": "string", "format": "uuid" } }
+      ],
+      "get": {
+        "summary": "List a customer's accounts",
+        "tags": ["Accounts"],
+        "responses": {
+          "200": { "description": "Account list", "content": { "application/json": { "schema": { "type": "object", "required": ["accounts"], "properties": { "accounts": { "type": "array", "items": { "$ref": "#/components/schemas/Account" } } } } } } },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "post": {
+        "summary": "Create an AUD deposit account with the configured opening balance",
+        "tags": ["Accounts"],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateAccountRequest" } } }
+        },
+        "responses": {
+          "201": { "description": "Account created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Account" } } } },
+          "400": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" },
+          "409": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/transfers": {
+      "post": {
+        "summary": "Atomically transfer AUD cents between accounts",
+        "tags": ["Transfers"],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateTransferRequest" } } }
+        },
+        "responses": {
+          "201": { "description": "Transfer completed", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Transfer" } } } },
+          "400": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" },
+          "409": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/customers/{customerId}/accounts/{accountId}/transactions": {
+      "get": {
+        "summary": "List transfers for an owned account, newest first",
+        "tags": ["Transfers"],
+        "parameters": [
+          { "in": "path", "name": "customerId", "required": true, "schema": { "type": "string", "format": "uuid" } },
+          { "in": "path", "name": "accountId", "required": true, "schema": { "type": "string", "format": "uuid" } }
+        ],
+        "responses": {
+          "200": { "description": "Directional transaction history", "content": { "application/json": { "schema": { "type": "object", "required": ["transactions"], "properties": { "transactions": { "type": "array", "items": { "$ref": "#/components/schemas/Transaction" } } } } } } },
+          "403": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/health": {
+      "get": {
+        "summary": "Check API and database health",
+        "tags": ["Operations"],
+        "responses": { "200": { "description": "Healthy" }, "503": { "description": "Database unavailable" } }
+      }
+    },
+    "/docs/openapi.json": {
+      "get": {
+        "summary": "Return this OpenAPI document",
+        "tags": ["Operations"],
+        "responses": { "200": { "description": "OpenAPI 3.0 JSON document" } }
+      }
+    }
+  },
+  "components": {
+    "responses": {
+      "Error": {
+        "description": "Request rejected",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } }
+      }
+    },
+    "schemas": {
+      "LoginRequest": {
+        "type": "object",
+        "required": ["email", "password"],
+        "properties": {
+          "email": { "type": "string", "format": "email" },
+          "password": { "type": "string", "format": "password" }
+        }
+      },
+      "CreateCustomerRequest": {
+        "type": "object",
+        "required": ["email", "password", "firstName", "lastName"],
+        "properties": {
+          "email": { "type": "string", "format": "email" },
+          "password": { "type": "string", "format": "password", "minLength": 8 },
+          "firstName": { "type": "string", "maxLength": 100 },
+          "lastName": { "type": "string", "maxLength": 100 }
+        }
+      },
+      "Customer": {
+        "type": "object",
+        "required": ["id", "email", "firstName", "lastName"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "email": { "type": "string", "format": "email" },
+          "firstName": { "type": "string" },
+          "lastName": { "type": "string" },
+          "phoneNumber": { "type": "string", "nullable": true },
+          "dateOfBirth": { "type": "string", "format": "date-time", "nullable": true },
+          "lastLoginAt": { "type": "string", "format": "date-time", "nullable": true }
+        }
+      },
+      "AccountType": {
+        "type": "string",
+        "enum": ["EVERYDAY", "SAVINGS", "BUSINESS"]
+      },
+      "CreateAccountRequest": {
+        "type": "object",
+        "required": ["type"],
+        "properties": {
+          "type": { "$ref": "#/components/schemas/AccountType" },
+          "displayName": { "type": "string", "maxLength": 80, "nullable": true }
+        }
+      },
+      "Account": {
+        "type": "object",
+        "required": ["id", "accountNumber", "customerId", "type", "balanceCents", "currency", "createdAt", "updatedAt"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "accountNumber": { "type": "string", "example": "EXB-123456789" },
+          "customerId": { "type": "string", "format": "uuid" },
+          "type": { "$ref": "#/components/schemas/AccountType" },
+          "displayName": { "type": "string", "nullable": true },
+          "balanceCents": { "type": "integer", "minimum": 0, "example": 100000000 },
+          "currency": { "type": "string", "enum": ["AUD"] },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "CreateTransferRequest": {
+        "type": "object",
+        "required": ["customerId", "sourceAccountId", "destinationAccountNumber", "amountCents"],
+        "properties": {
+          "customerId": { "type": "string", "format": "uuid" },
+          "sourceAccountId": { "type": "string", "format": "uuid" },
+          "destinationAccountNumber": { "type": "string" },
+          "amountCents": { "type": "integer", "minimum": 1 },
+          "description": { "type": "string", "maxLength": 140, "nullable": true }
+        }
+      },
+      "Transfer": {
+        "type": "object",
+        "required": ["id", "sourceAccountId", "destinationAccountId", "sourceAccountNumber", "destinationAccountNumber", "amountCents", "createdAt"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "sourceAccountId": { "type": "string", "format": "uuid" },
+          "destinationAccountId": { "type": "string", "format": "uuid" },
+          "sourceAccountNumber": { "type": "string" },
+          "destinationAccountNumber": { "type": "string" },
+          "amountCents": { "type": "integer", "minimum": 1 },
+          "description": { "type": "string", "nullable": true },
+          "createdAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "Transaction": {
+        "type": "object",
+        "required": ["id", "direction", "amountCents", "counterpartyAccountNumber", "createdAt"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "direction": { "type": "string", "enum": ["SENT", "RECEIVED"] },
+          "amountCents": { "type": "integer", "minimum": 1 },
+          "description": { "type": "string", "nullable": true },
+          "counterpartyAccountNumber": { "type": "string" },
+          "createdAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "required": ["error"],
+        "properties": {
+          "error": { "type": "string" }
+        }
+      }
+    }
+  }
+}

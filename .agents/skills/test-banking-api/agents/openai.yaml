@@ -1,0 +1,4 @@
+interface:
+  display_name: "Test Banking API"
+  short_description: "Create and run API integration tests"
+  default_prompt: "Use $test-banking-api to validate this change through API integration tests."

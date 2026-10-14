@@ -1,0 +1,8 @@
+#:schema https://developers.openai.com/codex/config-schema.json
+
+[agents]
+enabled = true
+max_concurrent_threads_per_session = 3
+
+[features]
+hooks = true

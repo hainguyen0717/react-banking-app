@@ -5,3 +5,8 @@ backend/node_modules/
 backend/prisma/dev.db
 backend/prisma/*.db
 backend/prisma/*.db-journal
+frontend/.vite-cache/
+frontend/dist/
+frontend/*.tsbuildinfo
+frontend/vite.config.js
+frontend/vite.config.d.ts

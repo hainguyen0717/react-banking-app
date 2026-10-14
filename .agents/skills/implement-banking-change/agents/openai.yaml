@@ -1,0 +1,4 @@
+interface:
+  display_name: "Implement Banking Change"
+  short_description: "Implement planned full-stack banking changes"
+  default_prompt: "Use $implement-banking-change to implement the approved banking app plan."

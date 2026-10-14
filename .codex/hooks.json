@@ -1,0 +1,32 @@
+{
+  "description": "Role routing and destructive-command guardrails for the banking-app agent workflow.",
+  "hooks": {
+    "SubagentStart": [
+      {
+        "matcher": "^(planner|developer|test)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 \"$(git rev-parse --show-toplevel)/.codex/hooks/subagent_context.py\"",
+            "timeout": 5,
+            "statusMessage": "Loading the specialist workflow",
+            "additionalContextLimit": 500
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "^Bash$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 \"$(git rev-parse --show-toplevel)/.codex/hooks/safety_guard.py\"",
+            "timeout": 5,
+            "statusMessage": "Checking repository safety rules"
+          }
+        ]
+      }
+    ]
+  }
+}
