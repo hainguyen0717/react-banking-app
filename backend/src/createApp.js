@@ -3,14 +3,16 @@ const cors = require('cors');
 const customerService = require('./services/customerService');
 const accountService = require('./services/accountService');
 const transferService = require('./services/transferService');
+const sessionService = require('./services/sessionService');
 const { BankingError } = require('./errors/BankingError');
 const { getPrismaClient } = require('./lib/prisma');
+const { getSessionConfig, getFrontendOrigins } = require('./config/sessionConfig');
+const { createAuthenticateMiddleware } = require('./middleware/authenticate');
+const { createTrustedOriginMiddleware } = require('./middleware/trustedOrigin');
+const { readSessionCookie, serializeSessionCookie, serializeClearedSessionCookie } = require('./http/sessionCookie');
 const openApiDocument = require('./docs/openapi.json');
 
-const LOCAL_FRONTEND_ORIGINS = new Set([
-  'http://localhost:5173',
-  'http://127.0.0.1:5173',
-]);
+const LOCAL_FRONTEND_ORIGINS = getFrontendOrigins();
 
 const defaultLogger = {
   info: (...args) => console.log(...args),
@@ -23,7 +25,7 @@ function createRequestLogger(logger = defaultLogger) {
     res.on('finish', () => {
       const endTime = process.hrtime.bigint();
       const durationMs = Number(endTime - startTime) / 1_000_000;
-      const message = `${req.method} ${req.originalUrl} -> ${res.statusCode} (${durationMs.toFixed(1)} ms)`;
+      const message = `${req.method} ${req.path} -> ${res.statusCode} (${durationMs.toFixed(1)} ms)`;
 
       if (res.statusCode >= 500) {
         logger.error(message);
@@ -36,36 +38,45 @@ function createRequestLogger(logger = defaultLogger) {
   };
 }
 
-function createDefaultServices(prisma) {
+function createDefaultServices(prisma, sessionConfig = getSessionConfig()) {
   return {
     ...customerService.createCustomerService({ prisma }),
     ...accountService.createAccountService({ prisma }),
     ...transferService.createTransferService({ prisma }),
+    ...sessionService.createSessionService({ prisma, config: sessionConfig }),
   };
 }
 
-function resolveCorsOrigin(origin, callback) {
+function resolveCorsOrigin(origin, callback, frontendOrigins = LOCAL_FRONTEND_ORIGINS) {
   // Requests without an Origin header are non-browser/same-origin clients and
   // do not need a CORS response header.
-  callback(null, !origin || LOCAL_FRONTEND_ORIGINS.has(origin));
+  callback(null, !origin || frontendOrigins.has(origin));
 }
 
 function createApp({
   prisma = getPrismaClient(),
   services = {},
-  logger = defaultLogger
+  logger = defaultLogger,
+  sessionConfig = getSessionConfig(),
+  frontendOrigins = getFrontendOrigins(),
+  isProduction = process.env.NODE_ENV === 'production',
 } = {}) {
   const app = express();
   const resolvedServices = {
-    ...createDefaultServices(prisma),
+    ...createDefaultServices(prisma, sessionConfig),
     ...services,
   };
+  const authenticate = createAuthenticateMiddleware({
+    resolveSession: resolvedServices.resolveSession,
+    isProduction,
+  });
+  const trustedOrigin = createTrustedOriginMiddleware(frontendOrigins);
 
-  app.use(cors({ origin: resolveCorsOrigin, credentials: true }));
+  app.use(cors({ origin: (origin, callback) => resolveCorsOrigin(origin, callback, frontendOrigins), credentials: true }));
   app.use(express.json());
   app.use(createRequestLogger(logger));
 
-  app.post('/api/login', async (req, res) => {
+  app.post('/api/login', trustedOrigin, async (req, res) => {
     const { email, password } = req.body ?? {};
 
     if (!email || !password) {
@@ -81,7 +92,19 @@ function createApp({
         return res.status(401).json({ error: 'Invalid credentials.' });
       }
 
-      logger.info(`Customer ${email} authenticated successfully.`);
+      const currentCookie = readSessionCookie(req.headers.cookie);
+      if (!currentCookie.malformed && currentCookie.token) {
+        const currentAuth = await resolvedServices.resolveSession(currentCookie.token);
+        if (currentAuth) await resolvedServices.deleteSession(currentAuth.session.id);
+      }
+      const created = await resolvedServices.createSession(customer.id);
+      res.setHeader('Set-Cookie', serializeSessionCookie(
+        created.token,
+        created.session.absoluteExpiresAt,
+        new Date(),
+        isProduction,
+      ));
+      logger.info(`Customer ${customer.id} authenticated successfully.`);
       return res.json(customer);
     } catch (error) {
       logger.error('Failed to authenticate customer', error);
@@ -89,7 +112,7 @@ function createApp({
     }
   });
 
-  app.post('/api/customers', async (req, res) => {
+  app.post('/api/customers', trustedOrigin, async (req, res) => {
     try {
       const customer = await resolvedServices.createCustomer(req.body);
       return res.status(201).json(customer);
@@ -98,37 +121,66 @@ function createApp({
     }
   });
 
-  app.post('/api/customers/:customerId/accounts', async (req, res) => {
+  app.get('/api/session', authenticate, (req, res) => {
+    res.json(req.auth.customer);
+  });
+
+  app.post('/api/logout', authenticate, trustedOrigin, async (req, res) => {
     try {
-      const account = await resolvedServices.createAccount(req.params.customerId, req.body);
+      await resolvedServices.deleteSession(req.auth.session.id);
+      res.setHeader('Set-Cookie', serializeClearedSessionCookie(isProduction));
+      return res.status(204).send();
+    } catch (error) {
+      return handleApiError(error, res, logger, 'Failed to log out');
+    }
+  });
+
+  app.post('/api/accounts', authenticate, trustedOrigin, async (req, res) => {
+    try {
+      const account = await resolvedServices.createAccount(req.auth.customer.id, req.body);
       return res.status(201).json(account);
     } catch (error) {
       return handleApiError(error, res, logger, 'Failed to create account');
     }
   });
 
-  app.get('/api/customers/:customerId/accounts', async (req, res) => {
+  app.post('/api/joint-accounts', authenticate, trustedOrigin, async (req, res) => {
     try {
-      const accounts = await resolvedServices.listAccounts(req.params.customerId);
+      const account = await resolvedServices.createJointAccount(req.auth.customer.id, req.body);
+      return res.status(201).json(account);
+    } catch (error) {
+      return handleApiError(error, res, logger, 'Failed to create joint account');
+    }
+  });
+
+  app.get('/api/accounts', authenticate, async (req, res) => {
+    try {
+      const accounts = await resolvedServices.listAccounts(req.auth.customer.id);
       return res.json({ accounts });
     } catch (error) {
       return handleApiError(error, res, logger, 'Failed to list accounts');
     }
   });
 
-  app.post('/api/transfers', async (req, res) => {
+  app.post('/api/transfers', authenticate, trustedOrigin, async (req, res) => {
     try {
-      const transfer = await resolvedServices.transferMoney(req.body);
+      const transfer = await resolvedServices.transferMoney({
+        sourceAccountId: req.body?.sourceAccountId,
+        destinationAccountNumber: req.body?.destinationAccountNumber,
+        amountCents: req.body?.amountCents,
+        description: req.body?.description,
+        customerId: req.auth.customer.id,
+      });
       return res.status(201).json(transfer);
     } catch (error) {
       return handleApiError(error, res, logger, 'Failed to transfer money');
     }
   });
 
-  app.get('/api/customers/:customerId/accounts/:accountId/transactions', async (req, res) => {
+  app.get('/api/accounts/:accountId/transactions', authenticate, async (req, res) => {
     try {
       const transactions = await resolvedServices.listTransactions(
-        req.params.customerId,
+        req.auth.customer.id,
         req.params.accountId,
       );
       return res.json({ transactions });
@@ -156,6 +208,11 @@ function createApp({
     res.redirect(308, '/api/health');
   });
 
+  app.use((error, _req, res, _next) => {
+    logger.error('Unhandled API error', error);
+    res.status(500).json({ error: 'Internal server error.' });
+  });
+
   return app;
 }
 
@@ -170,6 +227,7 @@ function handleApiError(error, res, logger, logMessage) {
 
 module.exports = {
   createApp,
+  createRequestLogger,
   createDefaultServices,
   resolveCorsOrigin,
   handleApiError,

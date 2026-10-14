@@ -2,12 +2,12 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 const { createTransferService, validateTransferInput } = require('../../src/services/transferService');
 
-function createTransactionPrisma({ sourceCustomerId = 'customer-1', sourceBalance = 5000, destinationId = 'account-2' } = {}) {
+function createTransactionPrisma({ sourceCustomerId = 'customer-1', coOwnerCustomerId = null, sourceBalance = 5000, destinationId = 'account-2' } = {}) {
   const calls = { updates: [], creates: [] };
   const tx = {
     account: {
       findUnique: async ({ where }) => where.id
-        ? { id: 'account-1', customerId: sourceCustomerId, accountNumber: 'EXB-000000001', balanceCents: sourceBalance }
+        ? { id: 'account-1', customerId: sourceCustomerId, coOwnerCustomerId, accountNumber: 'EXB-000000001', balanceCents: sourceBalance }
         : destinationId ? { id: destinationId, accountNumber: 'EXB-000000002' } : null,
       update: async (args) => { calls.updates.push(args); },
     },
@@ -41,6 +41,21 @@ test('transferMoney atomically debits, credits and records one transfer', async 
   assert.equal(transfer.destinationAccountNumber, 'EXB-000000002');
 });
 
+test('a joint co-owner can transfer from the shared account', async () => {
+  const { prisma, calls } = createTransactionPrisma({ sourceCustomerId: 'customer-1', coOwnerCustomerId: 'customer-2' });
+  const service = createTransferService({ prisma });
+
+  await service.transferMoney({
+    customerId: 'customer-2',
+    sourceAccountId: 'account-1',
+    destinationAccountNumber: 'EXB-000000002',
+    amountCents: 100,
+  });
+
+  assert.equal(calls.updates.length, 2);
+  assert.equal(calls.creates.length, 1);
+});
+
 test('transfer validation rejects invalid amounts and descriptions', () => {
   const base = { customerId: 'c', sourceAccountId: 'a', destinationAccountNumber: 'EXB-1' };
   assert.throws(() => validateTransferInput({ ...base, amountCents: 0 }), /positive whole number/);
@@ -65,9 +80,9 @@ test('transfer rejects unowned source, self-transfer and insufficient funds with
   }
 });
 
-test('listTransactions enforces ownership and derives SENT/RECEIVED in query order', async () => {
+test('listTransactions allows either joint owner and derives SENT/RECEIVED in query order', async () => {
   const prisma = {
-    account: { findUnique: async () => ({ id: 'account-1', customerId: 'customer-1' }) },
+    account: { findUnique: async () => ({ id: 'account-1', customerId: 'customer-1', coOwnerCustomerId: 'customer-2' }) },
     transfer: {
       findMany: async (args) => {
         assert.deepEqual(args.orderBy, [{ createdAt: 'desc' }, { id: 'desc' }]);
@@ -79,10 +94,32 @@ test('listTransactions enforces ownership and derives SENT/RECEIVED in query ord
     },
   };
   const service = createTransferService({ prisma });
-  const transactions = await service.listTransactions('customer-1', 'account-1');
+  const transactions = await service.listTransactions('customer-2', 'account-1');
 
   assert.deepEqual(transactions.map(({ id, direction, counterpartyAccountNumber }) => ({ id, direction, counterpartyAccountNumber })), [
     { id: 'new', direction: 'SENT', counterpartyAccountNumber: 'EXB-2' },
     { id: 'old', direction: 'RECEIVED', counterpartyAccountNumber: 'EXB-2' },
   ]);
+});
+
+test('an unrelated customer cannot transfer from or view a joint account and causes no writes', async () => {
+  const { prisma: transactionPrisma, calls } = createTransactionPrisma({ sourceCustomerId: 'customer-1', coOwnerCustomerId: 'customer-2' });
+  const transferService = createTransferService({ prisma: transactionPrisma });
+  await assert.rejects(
+    () => transferService.transferMoney({ customerId: 'customer-3', sourceAccountId: 'account-1', destinationAccountNumber: 'EXB-000000002', amountCents: 100 }),
+    (error) => error.code === 'SOURCE_ACCOUNT_FORBIDDEN',
+  );
+  assert.equal(calls.updates.length, 0);
+  assert.equal(calls.creates.length, 0);
+
+  const historyService = createTransferService({
+    prisma: {
+      account: { findUnique: async () => ({ id: 'account-1', customerId: 'customer-1', coOwnerCustomerId: 'customer-2' }) },
+      transfer: { findMany: async () => { throw new Error('history query must not run'); } },
+    },
+  });
+  await assert.rejects(
+    () => historyService.listTransactions('customer-3', 'account-1'),
+    (error) => error.code === 'ACCOUNT_FORBIDDEN',
+  );
 });

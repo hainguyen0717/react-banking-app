@@ -38,11 +38,13 @@
 
 ## Page-Specific Components
 
-- **Grouped Function Navigation:** `Accounts` contains `Accounts overview` and `New account`; `Transfer` contains `Transfer`.
+- **Grouped Function Navigation:** `Accounts` contains `Accounts overview`, `New account`, and `New joint account`; `Transfer` contains `Transfer`.
 - **Navigation Links:** Minimum 44px target height, visible hover/focus/current states, semantic lists, and `aria-current="page"` on the selected link.
-- **Deep Links:** Use `/dashboard?view=accounts`, `/dashboard?view=new-account`, and `/dashboard?view=transfer`; missing or invalid values fall back to accounts.
+- **Deep Links:** Use `/dashboard?view=accounts`, `/dashboard?view=new-account`, `/dashboard?view=new-joint-account`, and `/dashboard?view=transfer`; missing or invalid values fall back to accounts.
 - **State Continuity:** Query-only navigation must not remount the dashboard or clear loaded accounts, history, or partially completed forms.
 - **Skip Link:** Targets the selected content container at `#dashboard-content`.
+- **Joint Account Form:** Use controlled, explicitly labeled fields for the exact three product types, optional display name, and required registered co-owner email. Keep helper text visible, disable submit while pending, and announce success or error without leaving the selected view.
+- **Ownership Display:** Mark account cards as `Personal` or `Joint`; joint cards show both safe owner summaries. Transfer source options append `Joint` so shared accounts are unambiguous.
 
 ---
 

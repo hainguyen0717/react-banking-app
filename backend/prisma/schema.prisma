@@ -19,24 +19,43 @@ model Customer {
   lastLoginAt  DateTime?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
-  accounts     Account[]
+  primaryAccounts      Account[] @relation("PrimaryOwnerAccounts")
+  jointlyOwnedAccounts Account[] @relation("CoOwnerAccounts")
+  sessions              AuthSession[]
+}
+
+model AuthSession {
+  id                String   @id @default(uuid())
+  tokenHash         String   @unique
+  customerId        String
+  createdAt         DateTime @default(now())
+  lastSeenAt        DateTime @default(now())
+  absoluteExpiresAt DateTime
+  customer          Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([customerId])
+  @@index([absoluteExpiresAt])
 }
 
 model Account {
   id                   String     @id @default(uuid())
   accountNumber        String     @unique
   customerId           String
+  coOwnerCustomerId    String?
+  ownershipType        String     @default("SINGLE")
   type                 String
   displayName          String?
   balanceCents         Int
   currency             String     @default("AUD")
   createdAt            DateTime   @default(now())
   updatedAt            DateTime   @updatedAt
-  customer             Customer   @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  primaryOwner         Customer   @relation("PrimaryOwnerAccounts", fields: [customerId], references: [id], onDelete: Cascade)
+  coOwner              Customer?  @relation("CoOwnerAccounts", fields: [coOwnerCustomerId], references: [id], onDelete: Restrict)
   outgoingTransfers    Transfer[] @relation("OutgoingTransfers")
   incomingTransfers    Transfer[] @relation("IncomingTransfers")
 
   @@index([customerId])
+  @@index([coOwnerCustomerId])
 }
 
 model Transfer {

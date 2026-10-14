@@ -16,6 +16,12 @@ const prismaStub = {
   // Accept any template literal invocation
   $queryRaw: async () => 1
 };
+const sessionStub = {
+  createSession: async () => ({
+    token: 'A'.repeat(43),
+    session: { id: 'session-1', absoluteExpiresAt: new Date(Date.now() + 60_000) },
+  }),
+};
 
 async function withServer(app, handler) {
   const server = app.listen(0);
@@ -41,14 +47,14 @@ test('POST /api/login requires email and password', async () => {
   const logger = createTestLogger();
   const app = createApp({
     prisma: prismaStub,
-    services: { authenticateCustomer: async () => null },
+    services: { ...sessionStub, authenticateCustomer: async () => null },
     logger
   });
 
   await withServer(app, async (baseUrl) => {
     const response = await fetch(`${baseUrl}/api/login`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', Origin: 'http://localhost:5173' },
       body: JSON.stringify({ email: 'user@example.com' })
     });
 
@@ -63,14 +69,14 @@ test('POST /api/login rejects invalid credentials', async () => {
   const logger = createTestLogger();
   const app = createApp({
     prisma: prismaStub,
-    services: { authenticateCustomer: async () => null },
+    services: { ...sessionStub, authenticateCustomer: async () => null },
     logger
   });
 
   await withServer(app, async (baseUrl) => {
     const response = await fetch(`${baseUrl}/api/login`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', Origin: 'http://localhost:5173' },
       body: JSON.stringify({ email: 'invalid@example.com', password: 'wrong' })
     });
 
@@ -87,6 +93,7 @@ test('POST /api/login returns customer profile when authentication succeeds', as
   const app = createApp({
     prisma: prismaStub,
     services: {
+      ...sessionStub,
       authenticateCustomer: async (email, password) => {
         assert.equal(email, 'ada@example.com');
         assert.equal(password, 'secure');
@@ -99,13 +106,14 @@ test('POST /api/login returns customer profile when authentication succeeds', as
   await withServer(app, async (baseUrl) => {
     const response = await fetch(`${baseUrl}/api/login`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', Origin: 'http://localhost:5173' },
       body: JSON.stringify({ email: 'ada@example.com', password: 'secure' })
     });
 
     const body = await response.json();
     assert.equal(response.status, 200);
     assert.deepEqual(body, expectedCustomer);
+    assert.match(response.headers.get('set-cookie'), /^eb_session=/);
     assert(logger.entries.some((entry) => entry.message.includes('authenticated successfully')));
   });
 });

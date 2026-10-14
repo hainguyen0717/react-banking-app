@@ -1,6 +1,33 @@
 const assert = require('node:assert/strict');
+const { EventEmitter } = require('node:events');
 const test = require('node:test');
-const { createDefaultServices, resolveCorsOrigin } = require('../../src/createApp');
+const { createDefaultServices, createRequestLogger, resolveCorsOrigin } = require('../../src/createApp');
+
+async function invokeRoute(app, path, method, { headers = {}, body = {}, params = {} } = {}) {
+  const routeLayer = app._router.stack.find((candidate) => candidate.route?.path === path && candidate.route.methods[method]);
+  assert(routeLayer, `${method.toUpperCase()} ${path} should be registered`);
+  const req = { method: method.toUpperCase(), headers, body, params };
+  const res = {
+    statusCode: 200, body: null, headers: {},
+    status(code) { this.statusCode = code; return this; },
+    json(value) { this.body = value; return this; },
+    send(value) { this.body = value; return this; },
+    setHeader(name, value) { this.headers[name] = value; },
+  };
+  const run = async (index) => {
+    const handler = routeLayer.route.stack[index]?.handle;
+    if (!handler) return;
+    let nextPromise;
+    const next = (error) => {
+      nextPromise = error ? Promise.reject(error) : run(index + 1);
+      return nextPromise;
+    };
+    await handler(req, res, next);
+    if (nextPromise) await nextPromise;
+  };
+  await run(0);
+  return { req, res };
+}
 
 function checkCorsOrigin(origin) {
   return new Promise((resolve, reject) => {
@@ -21,6 +48,20 @@ test('CORS allows only the two exact local frontend origins', async () => {
   assert.equal(await checkCorsOrigin('http://localhost:5173.evil.example'), false);
 });
 
+test('request logging records only the path and never query values', () => {
+  const messages = [];
+  const res = new EventEmitter();
+  res.statusCode = 200;
+  createRequestLogger({ info: (message) => messages.push(message), error: () => {} })(
+    { method: 'GET', path: '/api/accounts', originalUrl: '/api/accounts?token=secret-value' },
+    res,
+    () => {},
+  );
+  res.emit('finish');
+  assert.match(messages[0], /^GET \/api\/accounts -> 200/);
+  assert.doesNotMatch(messages[0], /secret-value|token=/);
+});
+
 test('default services use the Prisma client injected into createApp wiring', async () => {
   const calls = [];
   const prisma = {
@@ -37,7 +78,7 @@ test('default services use the Prisma client injected into createApp wiring', as
       },
       findUnique: async (args) => {
         calls.push(['account.findUnique', args]);
-        return { id: 'account-1', customerId: 'customer-1' };
+        return { id: 'account-1', customerId: 'customer-1', coOwnerCustomerId: null };
       },
     },
     transfer: {
@@ -60,6 +101,11 @@ test('default services use the Prisma client injected into createApp wiring', as
   ]);
 });
 
+test('default service wiring exposes joint account creation', () => {
+  const services = createDefaultServices({ customer: {}, account: {}, transfer: {} });
+  assert.equal(typeof services.createJointAccount, 'function');
+});
+
 test('createApp service overrides remain independent from default wiring', async () => {
   const prisma = {
     customer: { findUnique: async () => { throw new Error('default customer service should not run'); } },
@@ -68,24 +114,113 @@ test('createApp service overrides remain independent from default wiring', async
   const { createApp } = require('../../src/createApp');
   const app = createApp({
     prisma,
-    services: { authenticateCustomer: override },
+    services: {
+      authenticateCustomer: override,
+      createSession: async () => ({ token: 'A'.repeat(43), session: { id: 'session-1', absoluteExpiresAt: new Date(Date.now() + 60_000) } }),
+    },
     logger: { info: () => {}, error: () => {} },
   });
 
   const loginLayer = app._router.stack.find((layer) => layer.route?.path === '/api/login');
   assert(loginLayer, 'login route should be registered');
 
-  let responseBody;
-  const response = {
-    statusCode: 200,
-    status(statusCode) { this.statusCode = statusCode; return this; },
-    json(body) { responseBody = body; return this; },
-  };
-  await loginLayer.route.stack[0].handle(
-    { body: { email: 'override@example.com', password: 'password' } },
-    response,
-  );
+  const { res: response } = await invokeRoute(app, '/api/login', 'post', {
+    headers: { origin: 'http://localhost:5173' },
+    body: { email: 'override@example.com', password: 'password' },
+  });
 
-  assert.deepEqual(responseBody, { id: 'override-customer' });
+  assert.deepEqual(response.body, { id: 'override-customer' });
   assert.equal(response.statusCode, 200);
+});
+
+test('protected routes derive the actor from req.auth and expose no customer-id route bypass', async () => {
+  let receivedCustomerId;
+  let receivedTransfer;
+  const auth = { session: { id: 'session-1' }, customer: { id: 'verified-customer' } };
+  const { createApp } = require('../../src/createApp');
+  const app = createApp({
+    prisma: { customer: {}, account: {}, transfer: {}, authSession: {} },
+    services: {
+      resolveSession: async () => auth,
+      listAccounts: async (customerId) => { receivedCustomerId = customerId; return []; },
+      transferMoney: async (input) => { receivedTransfer = input; return { id: 'transfer-1' }; },
+    },
+    logger: { info: () => {}, error: () => {} },
+  });
+
+  const paths = app._router.stack.filter((layer) => layer.route).map((layer) => layer.route.path);
+  assert(paths.includes('/api/accounts'));
+  assert(paths.includes('/api/joint-accounts'));
+  assert(paths.includes('/api/accounts/:accountId/transactions'));
+  assert(!paths.some((path) => String(path).includes(':customerId')));
+  assert.equal(app._router.stack.find((layer) => layer.route?.path === '/api/login').route.stack.length, 2);
+  assert.equal(app._router.stack.find((layer) => layer.route?.path === '/api/customers').route.stack.length, 2);
+  assert.equal(app._router.stack.find((layer) => layer.route?.path === '/api/accounts' && layer.route.methods.get).route.stack.length, 2);
+  assert.equal(app._router.stack.find((layer) => layer.route?.path === '/api/accounts' && layer.route.methods.post).route.stack.length, 3);
+
+  const authenticatedHeaders = { cookie: `eb_session=${'A'.repeat(43)}`, origin: 'http://localhost:5173' };
+  await invokeRoute(app, '/api/accounts', 'get', { headers: authenticatedHeaders });
+  await invokeRoute(app, '/api/transfers', 'post', {
+    headers: authenticatedHeaders,
+    body: { customerId: 'spoofed-customer', sourceAccountId: 'account-1', destinationAccountNumber: 'EXB-2', amountCents: 1 },
+  });
+  assert.equal(receivedCustomerId, 'verified-customer');
+  assert.equal(receivedTransfer.customerId, 'verified-customer');
+});
+
+test('logout revokes only req.auth.session and clears the cookie', async () => {
+  let deletedSessionId;
+  const { createApp } = require('../../src/createApp');
+  const app = createApp({
+    prisma: { customer: {}, account: {}, transfer: {}, authSession: {} },
+    services: {
+      resolveSession: async () => ({ session: { id: 'current-session' }, customer: { id: 'customer-1' } }),
+      deleteSession: async (sessionId) => { deletedSessionId = sessionId; },
+    },
+    logger: { info: () => {}, error: () => {} },
+  });
+  const { res } = await invokeRoute(app, '/api/logout', 'post', {
+    headers: { cookie: `eb_session=${'A'.repeat(43)}`, origin: 'http://localhost:5173' },
+  });
+  assert.equal(deletedSessionId, 'current-session');
+  assert.equal(res.statusCode, 204);
+  assert.match(res.headers['Set-Cookie'], /^eb_session=; Path=\/; HttpOnly; SameSite=Lax; Max-Age=0/);
+});
+
+test('protected mutations authenticate before trusted-origin checks while public mutations still require origin', async () => {
+  let protectedHandlerCalls = 0;
+  let publicHandlerCalls = 0;
+  const { createApp } = require('../../src/createApp');
+  const app = createApp({
+    prisma: { customer: {}, account: {}, transfer: {}, authSession: {} },
+    services: {
+      resolveSession: async () => ({ session: { id: 'session-1' }, customer: { id: 'customer-1' } }),
+      createAccount: async () => { protectedHandlerCalls += 1; return {}; },
+      createCustomer: async () => { publicHandlerCalls += 1; return {}; },
+    },
+    logger: { info: () => {}, error: () => {} },
+  });
+
+  const unauthenticated = await invokeRoute(app, '/api/accounts', 'post', { body: { type: 'EVERYDAY' } });
+  assert.equal(unauthenticated.res.statusCode, 401);
+  assert.deepEqual(unauthenticated.res.body, { error: 'Authentication required.' });
+
+  for (const origin of [undefined, 'http://localhost:5173.evil.example']) {
+    const headers = { cookie: `eb_session=${'A'.repeat(43)}` };
+    if (origin) headers.origin = origin;
+    const result = await invokeRoute(app, '/api/accounts', 'post', { headers, body: { type: 'EVERYDAY' } });
+    assert.equal(result.res.statusCode, 403);
+    assert.deepEqual(result.res.body, { error: 'Trusted Origin required.' });
+  }
+  assert.equal(protectedHandlerCalls, 0);
+
+  const publicWithoutOrigin = await invokeRoute(app, '/api/customers', 'post', { body: {} });
+  assert.equal(publicWithoutOrigin.res.statusCode, 403);
+  assert.equal(publicHandlerCalls, 0);
+
+  const publicAllowed = await invokeRoute(app, '/api/customers', 'post', {
+    headers: { origin: 'http://localhost:5173' }, body: {},
+  });
+  assert.equal(publicAllowed.res.statusCode, 201);
+  assert.equal(publicHandlerCalls, 1);
 });

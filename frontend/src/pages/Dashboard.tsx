@@ -1,14 +1,21 @@
-import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
-import { Link, Navigate, useNavigate, useSearchParams } from 'react-router-dom';
+import { FormEvent, useCallback, useEffect, useState } from 'react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { apiRequest } from '../lib/api';
 import { ACCOUNT_TYPES, AccountType, formatAud, parseAudToCents } from '../lib/banking';
-import { clearCustomerSession, loadCustomerSession } from '../lib/session';
+import { useAuth } from '../auth/AuthContext';
 import styles from './Dashboard.module.css';
 
 interface Account {
   id: string;
   accountNumber: string;
   customerId: string;
+  ownershipType: 'SINGLE' | 'JOINT';
+  owners: Array<{
+    id: string;
+    email: string;
+    firstName: string;
+    lastName: string;
+  }>;
   type: AccountType;
   displayName: string | null;
   balanceCents: number;
@@ -27,7 +34,8 @@ interface Transaction {
 }
 
 type HistoryState = Record<string, { status: 'loading' | 'ready' | 'error'; transactions: Transaction[]; error?: string }>;
-type DashboardView = 'accounts' | 'new-account' | 'transfer';
+type DashboardView = 'accounts' | 'new-account' | 'new-joint-account' | 'transfer';
+type FormMessage = { kind: 'success' | 'error'; text: string };
 
 function labelAccountType(type: AccountType) {
   return type === 'EVERYDAY' ? 'Everyday transactions' : type.charAt(0) + type.slice(1).toLowerCase();
@@ -35,8 +43,9 @@ function labelAccountType(type: AccountType) {
 
 export function Dashboard() {
   const navigate = useNavigate();
+  const auth = useAuth();
   const [searchParams] = useSearchParams();
-  const customer = useMemo(() => loadCustomerSession(), []);
+  const customer = auth.customer;
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [accountsStatus, setAccountsStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [accountsError, setAccountsError] = useState('');
@@ -44,6 +53,11 @@ export function Dashboard() {
   const [displayName, setDisplayName] = useState('');
   const [accountMessage, setAccountMessage] = useState<string | null>(null);
   const [isCreatingAccount, setIsCreatingAccount] = useState(false);
+  const [jointAccountType, setJointAccountType] = useState<AccountType>('EVERYDAY');
+  const [jointDisplayName, setJointDisplayName] = useState('');
+  const [coOwnerEmail, setCoOwnerEmail] = useState('');
+  const [jointAccountMessage, setJointAccountMessage] = useState<FormMessage | null>(null);
+  const [isCreatingJointAccount, setIsCreatingJointAccount] = useState(false);
   const [sourceAccountId, setSourceAccountId] = useState('');
   const [destinationAccountNumber, setDestinationAccountNumber] = useState('');
   const [amount, setAmount] = useState('');
@@ -52,12 +66,13 @@ export function Dashboard() {
   const [isTransferring, setIsTransferring] = useState(false);
   const [expandedAccountId, setExpandedAccountId] = useState<string | null>(null);
   const [history, setHistory] = useState<HistoryState>({});
+  const [logoutError, setLogoutError] = useState<string | null>(null);
 
   const loadAccounts = useCallback(async () => {
     if (!customer) return;
     setAccountsError('');
     try {
-      const response = await apiRequest<{ accounts: Account[] }>(`/api/customers/${customer.id}/accounts`);
+      const response = await apiRequest<{ accounts: Account[] }>('/api/accounts');
       setAccounts(response.accounts);
       setSourceAccountId((current) => current || response.accounts[0]?.id || '');
       setAccountsStatus('ready');
@@ -72,7 +87,7 @@ export function Dashboard() {
     setHistory((current) => ({ ...current, [accountId]: { status: 'loading', transactions: [] } }));
     try {
       const response = await apiRequest<{ transactions: Transaction[] }>(
-        `/api/customers/${customer.id}/accounts/${accountId}/transactions`,
+        `/api/accounts/${accountId}/transactions`,
       );
       setHistory((current) => ({ ...current, [accountId]: { status: 'ready', transactions: response.transactions } }));
     } catch (error) {
@@ -91,14 +106,14 @@ export function Dashboard() {
     void loadAccounts();
   }, [loadAccounts]);
 
-  if (!customer) return <Navigate to="/" replace />;
+  if (!customer) return null;
 
   async function handleCreateAccount(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setAccountMessage(null);
     setIsCreatingAccount(true);
     try {
-      await apiRequest<Account>(`/api/customers/${customer!.id}/accounts`, {
+      await apiRequest<Account>('/api/accounts', {
         method: 'POST',
         body: JSON.stringify({ type: accountType, displayName: displayName || undefined }),
       });
@@ -109,6 +124,36 @@ export function Dashboard() {
       setAccountMessage(error instanceof Error ? error.message : 'Account could not be created.');
     } finally {
       setIsCreatingAccount(false);
+    }
+  }
+
+  async function handleCreateJointAccount(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setJointAccountMessage(null);
+    setIsCreatingJointAccount(true);
+    try {
+      await apiRequest<Account>('/api/joint-accounts', {
+        method: 'POST',
+        body: JSON.stringify({
+          type: jointAccountType,
+          displayName: jointDisplayName || undefined,
+          coOwnerEmail,
+        }),
+      });
+      setJointDisplayName('');
+      setCoOwnerEmail('');
+      setJointAccountMessage({
+        kind: 'success',
+        text: 'Joint account created. Both owners can now view the shared balance and make transfers.',
+      });
+      await loadAccounts();
+    } catch (error) {
+      setJointAccountMessage({
+        kind: 'error',
+        text: error instanceof Error ? error.message : 'Joint account could not be created.',
+      });
+    } finally {
+      setIsCreatingJointAccount(false);
     }
   }
 
@@ -125,7 +170,6 @@ export function Dashboard() {
       await apiRequest('/api/transfers', {
         method: 'POST',
         body: JSON.stringify({
-          customerId: customer!.id,
           sourceAccountId,
           destinationAccountNumber,
           amountCents,
@@ -153,14 +197,19 @@ export function Dashboard() {
     void loadTransactions(accountId);
   }
 
-  function handleLogout() {
-    clearCustomerSession();
-    navigate('/');
+  async function handleLogout() {
+    setLogoutError(null);
+    try {
+      await auth.logout();
+      navigate('/');
+    } catch (error) {
+      setLogoutError(error instanceof Error ? error.message : 'Logout could not be completed.');
+    }
   }
 
   const totalBalance = accounts.reduce((total, account) => total + account.balanceCents, 0);
   const requestedView = searchParams.get('view');
-  const activeView: DashboardView = requestedView === 'new-account' || requestedView === 'transfer'
+  const activeView: DashboardView = requestedView === 'new-account' || requestedView === 'new-joint-account' || requestedView === 'transfer'
     ? requestedView
     : 'accounts';
 
@@ -172,6 +221,7 @@ export function Dashboard() {
         <div className={styles.customerMeta} data-testid="dashboard-customer-meta">
           <span className={styles.customerName} data-testid="dashboard-customer-name">{customer.firstName} {customer.lastName}</span>
           <button className={styles.logoutButton} type="button" onClick={handleLogout} data-testid="dashboard-logout">Log out</button>
+          {logoutError ? <span className={styles.error} role="alert" data-testid="dashboard-logout-error">{logoutError}</span> : null}
         </div>
       </header>
 
@@ -200,6 +250,9 @@ export function Dashboard() {
                   </li>
                   <li data-testid="dashboard-nav-new-account-item">
                     <Link className={styles.navLink} to="/dashboard?view=new-account" aria-current={activeView === 'new-account' ? 'page' : undefined} data-testid="dashboard-nav-new-account">New account</Link>
+                  </li>
+                  <li data-testid="dashboard-nav-new-joint-account-item">
+                    <Link className={styles.navLink} to="/dashboard?view=new-joint-account" aria-current={activeView === 'new-joint-account' ? 'page' : undefined} data-testid="dashboard-nav-new-joint-account">New joint account</Link>
                   </li>
                 </ul>
               </section>
@@ -249,6 +302,16 @@ export function Dashboard() {
                           <span className={styles.statusBadge} data-testid={`account-status-${account.id}`}>Active</span>
                         </div>
                         <p className={styles.accountNumber} data-testid={`account-number-${account.id}`}>{account.accountNumber}</p>
+                        <div className={styles.accountOwnership} data-testid={`account-owners-${account.id}`}>
+                          <span className={account.ownershipType === 'JOINT' ? styles.jointBadge : styles.personalBadge} data-testid={`account-ownership-${account.id}`}>
+                            {account.ownershipType === 'JOINT' ? 'Joint' : 'Personal'}
+                          </span>
+                          {(account.owners ?? []).map((owner) => (
+                            <span className={styles.accountOwner} key={owner.id} data-testid={`account-owner-${account.id}-${owner.id}`}>
+                              {owner.firstName} {owner.lastName} · {owner.email}
+                            </span>
+                          ))}
+                        </div>
                         <div className={styles.accountBalanceRow} data-testid={`account-balance-row-${account.id}`}>
                           <span className={styles.balanceLabel} data-testid={`account-balance-label-${account.id}`}>Available</span>
                           <strong className={styles.accountBalance} data-testid={`account-balance-${account.id}`}>{formatAud(account.balanceCents)}</strong>
@@ -303,6 +366,37 @@ export function Dashboard() {
               </section>
             ) : null}
 
+            {activeView === 'new-joint-account' ? (
+              <section className={styles.viewPanel} aria-labelledby="new-joint-account-view-heading" data-testid="dashboard-view-new-joint-account">
+                <h2 className={styles.sectionTitle} id="new-joint-account-view-heading" data-testid="dashboard-view-new-joint-account-heading">New joint account</h2>
+                <section className={styles.actionCard} aria-labelledby="create-joint-account-heading" data-testid="joint-account-create-section">
+                  <p className={styles.eyebrow} data-testid="joint-account-create-eyebrow">Shared account setup</p>
+                  <h3 className={styles.actionTitle} id="create-joint-account-heading" data-testid="joint-account-create-heading">Open a joint test account</h3>
+                  <p className={styles.actionCopy} data-testid="joint-account-create-copy">Create one shared account with the configured opening balance applied once.</p>
+                  <form className={styles.form} onSubmit={handleCreateJointAccount} data-testid="joint-account-create-form">
+                    <label className={styles.label} htmlFor="joint-account-type" data-testid="joint-account-create-type-label">Account type
+                      <select className={styles.input} id="joint-account-type" value={jointAccountType} onChange={(event) => setJointAccountType(event.target.value as AccountType)} data-testid="joint-account-create-type">
+                        {ACCOUNT_TYPES.map((type) => <option key={type} value={type} data-testid={`joint-account-create-type-option-${type}`}>{labelAccountType(type)}</option>)}
+                      </select>
+                    </label>
+                    <label className={styles.label} htmlFor="joint-account-display-name" data-testid="joint-account-create-display-name-label">Display name <span className={styles.optional} data-testid="joint-account-create-display-name-optional">Optional</span>
+                      <input className={styles.input} id="joint-account-display-name" maxLength={80} value={jointDisplayName} onChange={(event) => setJointDisplayName(event.target.value)} data-testid="joint-account-create-display-name" />
+                    </label>
+                    <label className={styles.label} htmlFor="joint-account-co-owner-email" data-testid="joint-account-create-co-owner-email-label">Co-owner email
+                      <input className={styles.input} id="joint-account-co-owner-email" type="email" value={coOwnerEmail} onChange={(event) => setCoOwnerEmail(event.target.value)} aria-describedby="joint-account-create-co-owner-help" required data-testid="joint-account-create-co-owner-email" />
+                    </label>
+                    <p className={styles.fieldHelp} id="joint-account-create-co-owner-help" data-testid="joint-account-create-co-owner-help">The co-owner must already be a registered active customer. Both owners can view the account and transfer from its shared balance.</p>
+                    {jointAccountMessage ? (
+                      <p className={jointAccountMessage.kind === 'error' ? styles.error : styles.formMessage} role={jointAccountMessage.kind === 'error' ? 'alert' : 'status'} aria-live="polite" data-testid="joint-account-create-message">
+                        {jointAccountMessage.text}
+                      </p>
+                    ) : null}
+                    <button className={styles.primaryButton} type="submit" disabled={isCreatingJointAccount} data-testid="joint-account-create-submit">{isCreatingJointAccount ? 'Opening joint account…' : 'Open joint account'}</button>
+                  </form>
+                </section>
+              </section>
+            ) : null}
+
             {activeView === 'transfer' ? (
               <section className={styles.viewPanel} aria-labelledby="transfer-view-heading" data-testid="dashboard-view-transfer">
                 <h2 className={styles.sectionTitle} id="transfer-view-heading" data-testid="dashboard-view-transfer-heading">Transfer</h2>
@@ -314,7 +408,7 @@ export function Dashboard() {
                     <label className={styles.label} htmlFor="source-account" data-testid="transfer-source-label">From
                       <select className={styles.input} id="source-account" value={sourceAccountId} onChange={(event) => setSourceAccountId(event.target.value)} required disabled={accounts.length === 0} data-testid="transfer-source-account">
                         {accounts.length === 0 ? <option value="" data-testid="transfer-source-empty-option">Create an account first</option> : null}
-                        {accounts.map((account) => <option key={account.id} value={account.id} data-testid={`transfer-source-option-${account.id}`}>{account.displayName || labelAccountType(account.type)} · {account.accountNumber}</option>)}
+                        {accounts.map((account) => <option key={account.id} value={account.id} data-testid={`transfer-source-option-${account.id}`}>{account.displayName || labelAccountType(account.type)} · {account.accountNumber}{account.ownershipType === 'JOINT' ? ' · Joint' : ''}</option>)}
                       </select>
                     </label>
                     <label className={styles.label} htmlFor="destination-account" data-testid="transfer-destination-label">Destination account number

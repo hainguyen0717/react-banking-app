@@ -51,6 +51,7 @@ Validate hook behavior with `python3 -m unittest discover -s .codex/hooks/tests`
 - Read-only.
 - Maps requirements across data, backend, frontend, contracts, documentation, and tests.
 - Supplies file-level steps, acceptance criteria, assumptions, and exclusions.
+- For changes to non-public APIs, maps public/protected routes, server-derived identity, session lifecycle, resource authorization, mutation-origin/CSRF controls, `401`/`403` behavior, sensitive storage/logging, and authentication tests. Skip that expansion for documentation, styling, and public-only changes.
 
 ### Developer
 
@@ -59,6 +60,7 @@ Validate hook behavior with `python3 -m unittest discover -s .codex/hooks/tests`
 - Adds focused unit and component tests.
 - Ensures every new or modified rendered frontend element has a unique, stable automation locator, normally `data-testid`, while preserving semantic and accessible selectors.
 - Uses stable record IDs for repeated-element locators and never array indexes or mutable display text.
+- For protected behavior, derives identity only from verified server authentication context and preserves middleware, ownership, expiry/logout, secure-cookie, trusted-origin, and secret-handling guarantees in code, contracts, and tests.
 
 ### Test
 

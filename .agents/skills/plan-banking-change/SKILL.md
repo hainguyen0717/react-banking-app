@@ -21,12 +21,27 @@ Use the original request and the current repository state. Treat documentation a
 8. Order the work by dependency and list exact likely files or clearly identified new files.
 9. Keep the solution proportional to a deterministic test-tool demo. Exclude production-only infrastructure unless the request requires it.
 
+## Authentication planning gate
+
+When a request adds or changes a non-public API, explicitly plan:
+
+- public versus protected operations and authentication middleware placement;
+- session creation, renewal, expiry, revocation, logout, and safe persistence;
+- actor identity derived from verified server context, never client path/body identity;
+- method-level and resource ownership authorization with distinct `401` and `403` outcomes;
+- cookie attributes, credentialed CORS, and CSRF/trusted-origin controls for mutations;
+- secret/token handling across database fields, responses, URLs, DOM/Web Storage, fixtures, and logs;
+- focused unit/component coverage and Test-agent HTTP scenarios for authentication and authorization.
+
+Skip this expansion for documentation-only, styling-only, and public-only changes unless they alter an existing security contract.
+
 ## Repository constraints
 
 - Confirm which backend is active before planning. npm currently runs the CommonJS Express/Prisma path; TypeScript backend files may be disconnected.
 - Use Prisma with SQLite for persistent domain data.
 - Require unique stable automation locators for every new or modified rendered frontend element. For repeated records, derive locators from stable record IDs, never array indexes or mutable display text.
 - Include ownership and shared-visibility rules when behavior spans customers, accounts, or transactions.
+- Treat any client-provided customer identifier as untrusted unless the active security design explicitly verifies it against the authenticated actor.
 
 ## Output
 
@@ -44,4 +59,3 @@ Return these sections:
 10. Acceptance criteria and exclusions
 
 Do not edit files.
-

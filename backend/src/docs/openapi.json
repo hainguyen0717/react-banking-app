@@ -2,8 +2,8 @@
   "openapi": "3.0.3",
   "info": {
     "title": "Express Bank Demo API",
-    "version": "2.0.0",
-    "description": "Deterministic customer, account and transfer APIs for test-tool demonstrations. Customer IDs provide the intentionally simple demo session and ownership context."
+    "version": "3.0.0",
+    "description": "Deterministic customer, opaque-session, single/joint account and transfer APIs for test-tool demonstrations. Protected actor identity is derived exclusively from the eb_session HttpOnly cookie."
   },
   "servers": [
     {
@@ -16,14 +16,16 @@
       "post": {
         "summary": "Log in an active customer",
         "tags": ["Customers"],
+        "security": [],
         "requestBody": {
           "required": true,
           "content": { "application/json": { "schema": { "$ref": "#/components/schemas/LoginRequest" } } }
         },
         "responses": {
-          "200": { "description": "Customer profile", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Customer" } } } },
+          "200": { "description": "Customer profile and opaque session cookie", "headers": { "Set-Cookie": { "schema": { "type": "string", "example": "eb_session=opaque; Path=/; HttpOnly; SameSite=Lax" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Customer" } } } },
           "400": { "$ref": "#/components/responses/Error" },
-          "401": { "$ref": "#/components/responses/Error" }
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" }
         }
       }
     },
@@ -31,6 +33,7 @@
       "post": {
         "summary": "Create a customer",
         "tags": ["Customers"],
+        "security": [],
         "requestBody": {
           "required": true,
           "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateCustomerRequest" } } }
@@ -38,25 +41,51 @@
         "responses": {
           "201": { "description": "Customer created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Customer" } } } },
           "400": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
           "409": { "$ref": "#/components/responses/Error" }
         }
       }
     },
-    "/api/customers/{customerId}/accounts": {
-      "parameters": [
-        { "in": "path", "name": "customerId", "required": true, "schema": { "type": "string", "format": "uuid" } }
-      ],
+    "/api/session": {
       "get": {
-        "summary": "List a customer's accounts",
+        "summary": "Return the authenticated safe customer profile and refresh idle activity",
+        "tags": ["Sessions"],
+        "security": [{ "cookieAuth": [] }],
+        "responses": {
+          "200": { "description": "Authenticated customer profile", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Customer" } } } },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/logout": {
+      "post": {
+        "summary": "Revoke only the current session and clear its cookie",
+        "tags": ["Sessions"],
+        "security": [{ "cookieAuth": [] }],
+        "responses": {
+          "204": { "description": "Current session revoked", "headers": { "Set-Cookie": { "schema": { "type": "string" } } } },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/accounts": {
+      "get": {
+        "summary": "List a customer's personal and jointly owned accounts",
+        "description": "Each shared account is returned once with the same ID, balance, owners, and history for either owner.",
         "tags": ["Accounts"],
+        "security": [{ "cookieAuth": [] }],
         "responses": {
           "200": { "description": "Account list", "content": { "application/json": { "schema": { "type": "object", "required": ["accounts"], "properties": { "accounts": { "type": "array", "items": { "$ref": "#/components/schemas/Account" } } } } } } },
-          "404": { "$ref": "#/components/responses/Error" }
+          "401": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" },
+          "409": { "$ref": "#/components/responses/Error" }
         }
       },
       "post": {
         "summary": "Create an AUD deposit account with the configured opening balance",
         "tags": ["Accounts"],
+        "security": [{ "cookieAuth": [] }],
         "requestBody": {
           "required": true,
           "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateAccountRequest" } } }
@@ -64,6 +93,28 @@
         "responses": {
           "201": { "description": "Account created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Account" } } } },
           "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" },
+          "409": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/joint-accounts": {
+      "post": {
+        "summary": "Create one joint AUD account shared by two active registered customers",
+        "description": "The server resolves the co-owner by normalized email and applies the configured opening balance once. Both owners receive equal view and transfer access immediately; no invitation step is used.",
+        "tags": ["Accounts"],
+        "security": [{ "cookieAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateJointAccountRequest" } } }
+        },
+        "responses": {
+          "201": { "description": "Joint account created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Account" } } } },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
           "404": { "$ref": "#/components/responses/Error" },
           "409": { "$ref": "#/components/responses/Error" }
         }
@@ -73,6 +124,7 @@
       "post": {
         "summary": "Atomically transfer AUD cents between accounts",
         "tags": ["Transfers"],
+        "security": [{ "cookieAuth": [] }],
         "requestBody": {
           "required": true,
           "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateTransferRequest" } } }
@@ -80,22 +132,24 @@
         "responses": {
           "201": { "description": "Transfer completed", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Transfer" } } } },
           "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
           "403": { "$ref": "#/components/responses/Error" },
           "404": { "$ref": "#/components/responses/Error" },
           "409": { "$ref": "#/components/responses/Error" }
         }
       }
     },
-    "/api/customers/{customerId}/accounts/{accountId}/transactions": {
+    "/api/accounts/{accountId}/transactions": {
       "get": {
-        "summary": "List transfers for an owned account, newest first",
+        "summary": "List transfers for a personal or jointly owned account, newest first",
         "tags": ["Transfers"],
+        "security": [{ "cookieAuth": [] }],
         "parameters": [
-          { "in": "path", "name": "customerId", "required": true, "schema": { "type": "string", "format": "uuid" } },
           { "in": "path", "name": "accountId", "required": true, "schema": { "type": "string", "format": "uuid" } }
         ],
         "responses": {
           "200": { "description": "Directional transaction history", "content": { "application/json": { "schema": { "type": "object", "required": ["transactions"], "properties": { "transactions": { "type": "array", "items": { "$ref": "#/components/schemas/Transaction" } } } } } } },
+          "401": { "$ref": "#/components/responses/Error" },
           "403": { "$ref": "#/components/responses/Error" },
           "404": { "$ref": "#/components/responses/Error" }
         }
@@ -105,6 +159,7 @@
       "get": {
         "summary": "Check API and database health",
         "tags": ["Operations"],
+        "security": [],
         "responses": { "200": { "description": "Healthy" }, "503": { "description": "Database unavailable" } }
       }
     },
@@ -112,11 +167,20 @@
       "get": {
         "summary": "Return this OpenAPI document",
         "tags": ["Operations"],
+        "security": [],
         "responses": { "200": { "description": "OpenAPI 3.0 JSON document" } }
       }
     }
   },
   "components": {
+    "securitySchemes": {
+      "cookieAuth": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "eb_session",
+        "description": "Opaque session token. Only its SHA-256 hash is persisted server-side."
+      }
+    },
     "responses": {
       "Error": {
         "description": "Request rejected",
@@ -159,6 +223,10 @@
         "type": "string",
         "enum": ["EVERYDAY", "SAVINGS", "BUSINESS"]
       },
+      "OwnershipType": {
+        "type": "string",
+        "enum": ["SINGLE", "JOINT"]
+      },
       "CreateAccountRequest": {
         "type": "object",
         "required": ["type"],
@@ -167,13 +235,35 @@
           "displayName": { "type": "string", "maxLength": 80, "nullable": true }
         }
       },
+      "CreateJointAccountRequest": {
+        "type": "object",
+        "required": ["type", "coOwnerEmail"],
+        "properties": {
+          "type": { "$ref": "#/components/schemas/AccountType" },
+          "displayName": { "type": "string", "maxLength": 80, "nullable": true },
+          "coOwnerEmail": { "type": "string", "format": "email", "description": "Normalized email of a different active registered customer." }
+        }
+      },
+      "AccountOwner": {
+        "type": "object",
+        "required": ["id", "email", "firstName", "lastName"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "email": { "type": "string", "format": "email" },
+          "firstName": { "type": "string" },
+          "lastName": { "type": "string" }
+        }
+      },
       "Account": {
         "type": "object",
-        "required": ["id", "accountNumber", "customerId", "type", "balanceCents", "currency", "createdAt", "updatedAt"],
+        "description": "One account record. customerId remains creator/legacy primary-owner metadata; authorization permits either owner listed in owners.",
+        "required": ["id", "accountNumber", "customerId", "ownershipType", "owners", "type", "balanceCents", "currency", "createdAt", "updatedAt"],
         "properties": {
           "id": { "type": "string", "format": "uuid" },
           "accountNumber": { "type": "string", "example": "EXB-123456789" },
           "customerId": { "type": "string", "format": "uuid" },
+          "ownershipType": { "$ref": "#/components/schemas/OwnershipType" },
+          "owners": { "type": "array", "minItems": 1, "maxItems": 2, "description": "Complete safe owner set in primary-owner then co-owner order.", "items": { "$ref": "#/components/schemas/AccountOwner" } },
           "type": { "$ref": "#/components/schemas/AccountType" },
           "displayName": { "type": "string", "nullable": true },
           "balanceCents": { "type": "integer", "minimum": 0, "example": 100000000 },
@@ -184,9 +274,8 @@
       },
       "CreateTransferRequest": {
         "type": "object",
-        "required": ["customerId", "sourceAccountId", "destinationAccountNumber", "amountCents"],
+        "required": ["sourceAccountId", "destinationAccountNumber", "amountCents"],
         "properties": {
-          "customerId": { "type": "string", "format": "uuid" },
           "sourceAccountId": { "type": "string", "format": "uuid" },
           "destinationAccountNumber": { "type": "string" },
           "amountCents": { "type": "integer", "minimum": 1 },

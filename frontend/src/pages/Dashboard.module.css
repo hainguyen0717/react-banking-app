@@ -79,6 +79,11 @@
 .accountName { margin: 0; font-size: 1.25rem; }
 .statusBadge { padding: 0.25rem 0.5rem; border: 1px solid #2f7660; color: #91e5c5; border-radius: 999px; font-size: 0.75rem; }
 .accountNumber { margin: 1.5rem 0; color: var(--color-muted-foreground); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
+.accountOwnership { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin: -0.75rem 0 1.25rem; }
+.personalBadge, .jointBadge { flex: none; padding: 0.25rem 0.5rem; border-radius: 999px; font-size: 0.75rem; font-weight: 700; }
+.personalBadge { border: 1px solid var(--color-border); color: var(--color-muted-foreground); }
+.jointBadge { border: 1px solid #9d7a2c; color: var(--color-primary); background: var(--color-primary-soft); }
+.accountOwner { color: var(--color-muted-foreground); font-size: 0.8125rem; overflow-wrap: anywhere; }
 .accountBalanceRow { align-items: baseline; padding-bottom: 1rem; border-bottom: 1px solid var(--color-border); }
 .accountBalance { font-size: 1.5rem; font-variant-numeric: tabular-nums; }
 .historyButton { width: 100%; margin-top: 1rem; }
@@ -95,6 +100,7 @@
 .form { display: grid; gap: 1rem; }
 .label { display: grid; gap: 0.4rem; color: #cbd5e1; font-size: 0.875rem; font-weight: 600; }
 .optional { color: var(--color-muted-foreground); font-weight: 400; }
+.fieldHelp { margin: -0.5rem 0 0; color: var(--color-muted-foreground); font-size: 0.8125rem; line-height: 1.5; }
 .input { width: 100%; min-height: 2.875rem; box-sizing: border-box; border: 1px solid var(--color-border); border-radius: 0.5rem; background: var(--color-muted); color: var(--color-foreground); padding: 0.7rem 0.8rem; font: inherit; transition: border-color var(--motion-fast), box-shadow var(--motion-fast); }
 .input:focus { outline: 0; border-color: var(--color-ring); box-shadow: 0 0 0 3px var(--color-primary-ring); }
 .input:disabled { opacity: 0.5; cursor: not-allowed; }

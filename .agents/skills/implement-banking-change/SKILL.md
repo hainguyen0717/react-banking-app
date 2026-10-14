@@ -21,6 +21,20 @@ Use the original request, the Planner's complete plan, and the current worktree.
 4. Run the narrowest relevant checks first, then broader package checks when feasible.
 5. Inspect the final diff for unrelated edits, generated artifacts, secrets, sensitive fields, and incomplete documentation.
 
+## Protected-operation contract
+
+When implementing a non-public API or authenticated UI flow:
+
+- derive actor identity only from verified authentication middleware/context, never a client path, body, query, or browser-stored profile;
+- enforce resource ownership separately from authentication and preserve clear `401` versus `403` behavior;
+- implement session creation, bounded expiry/renewal, inactive-user rejection, current-session logout, and safe revocation where the plan requires sessions;
+- serialize cookies with the planned `HttpOnly`, `Secure`, `SameSite`, path, lifetime, and clearing attributes;
+- require the planned CSRF/trusted-origin control for cookie-authenticated mutations and keep it aligned with credentialed CORS;
+- keep raw tokens, password hashes, cookie headers, and secrets out of persistence fields not designed for hashes, responses, URLs, DOM/Web Storage, logs, and committed fixtures;
+- update OpenAPI security declarations and add focused service, middleware, cookie, route, provider, guard, and protected-action tests.
+
+Skip security expansion for documentation-only, styling-only, and public-only changes, but do not weaken an existing boundary.
+
 ## Frontend locator contract
 
 - Give every new or modified rendered element a unique, descriptive, stable `data-testid`.
@@ -48,4 +62,3 @@ Return:
 - commands run and exact outcomes;
 - assumptions, plan deviations, and known environment limitations;
 - API scenarios the Test agent should verify.
-

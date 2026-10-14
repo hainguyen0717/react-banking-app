@@ -48,12 +48,12 @@ function createTransferService({ prisma = getPrismaClient() } = {}) {
     return prisma.$transaction(async (tx) => {
       const source = await tx.account.findUnique({
         where: { id: valid.sourceAccountId },
-        select: { id: true, customerId: true, accountNumber: true, balanceCents: true },
+        select: { id: true, customerId: true, coOwnerCustomerId: true, accountNumber: true, balanceCents: true },
       });
       if (!source) {
         throw new BankingError(404, 'SOURCE_ACCOUNT_NOT_FOUND', 'Source account was not found.');
       }
-      if (source.customerId !== valid.customerId) {
+      if (source.customerId !== valid.customerId && source.coOwnerCustomerId !== valid.customerId) {
         throw new BankingError(403, 'SOURCE_ACCOUNT_FORBIDDEN', 'The source account does not belong to this customer.');
       }
 
@@ -100,12 +100,12 @@ function createTransferService({ prisma = getPrismaClient() } = {}) {
   const listTransactions = async (customerId, accountId) => {
     const account = await prisma.account.findUnique({
       where: { id: accountId },
-      select: { id: true, customerId: true },
+      select: { id: true, customerId: true, coOwnerCustomerId: true },
     });
     if (!account) {
       throw new BankingError(404, 'ACCOUNT_NOT_FOUND', 'Account was not found.');
     }
-    if (account.customerId !== customerId) {
+    if (account.customerId !== customerId && account.coOwnerCustomerId !== customerId) {
       throw new BankingError(403, 'ACCOUNT_FORBIDDEN', 'This account does not belong to the customer.');
     }
 

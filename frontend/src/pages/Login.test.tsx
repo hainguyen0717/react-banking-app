@@ -1,7 +1,15 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { ReactNode } from 'react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CustomerLogin } from './Login';
+import { AuthProvider, AuthState } from '../auth/AuthContext';
+
+const anonymousState: AuthState = { status: 'anonymous', customer: null, error: null };
+
+function loginPage(children: ReactNode) {
+  return <AuthProvider initialState={anonymousState}>{children}</AuthProvider>;
+}
 
 afterEach(() => {
   localStorage.clear();
@@ -10,7 +18,7 @@ afterEach(() => {
 
 describe('CustomerLogin', () => {
   it('renders the accessible login form and registration route with stable locators', () => {
-    render(<MemoryRouter><CustomerLogin /></MemoryRouter>);
+    render(loginPage(<MemoryRouter><CustomerLogin /></MemoryRouter>));
 
     expect(screen.getByTestId('customer-login-header')).toHaveTextContent('Banking that stays clear.');
     expect(screen.getByTestId('customer-login-username')).toHaveAttribute('autocomplete', 'email');
@@ -27,12 +35,14 @@ describe('CustomerLogin', () => {
     } as Response);
 
     render(
-      <MemoryRouter initialEntries={['/']}>
-        <Routes>
-          <Route path="/" element={<CustomerLogin />} />
-          <Route path="/dashboard" element={<div data-testid="dashboard-route">Dashboard</div>} />
-        </Routes>
-      </MemoryRouter>,
+      loginPage(
+        <MemoryRouter initialEntries={['/']}>
+          <Routes>
+            <Route path="/" element={<CustomerLogin />} />
+            <Route path="/dashboard" element={<div data-testid="dashboard-route">Dashboard</div>} />
+          </Routes>
+        </MemoryRouter>,
+      ),
     );
 
     fireEvent.change(screen.getByTestId('customer-login-username'), { target: { value: 'ada@example.com' } });
@@ -40,7 +50,10 @@ describe('CustomerLogin', () => {
     fireEvent.click(screen.getByTestId('customer-login-submit'));
 
     expect(await screen.findByTestId('dashboard-route')).toBeInTheDocument();
-    await waitFor(() => expect(localStorage.getItem('express-bank-customer')).toContain('customer-1'));
-    expect(localStorage.getItem('express-bank-customer')).not.toContain('safe-pass');
+    await waitFor(() => expect(globalThis.fetch).toHaveBeenCalledWith(
+      expect.stringContaining('/api/login'),
+      expect.objectContaining({ credentials: 'include' }),
+    ));
+    expect(localStorage.getItem('express-bank-customer')).toBeNull();
   });
 });

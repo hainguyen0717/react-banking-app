@@ -1,12 +1,12 @@
 import { FormEvent, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { apiRequest } from '../lib/api';
-import { CustomerProfile, saveCustomerSession } from '../lib/session';
+import { useAuth } from '../auth/AuthContext';
 import styles from './Login.module.css';
 
 export function CustomerLogin() {
   const navigate = useNavigate();
   const location = useLocation();
+  const auth = useAuth();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -25,18 +25,11 @@ export function CustomerLogin() {
     setIsSubmitting(true);
 
     try {
-      const data = await apiRequest<CustomerProfile>('/api/login', {
-        method: 'POST',
-        body: JSON.stringify({
-          email: trimmedUsername,
-          password
-        })
-      });
+      const data = await auth.login(trimmedUsername, password);
       if (!data.id || !data.firstName || !data.email || !data.lastName) {
         setError('Unable to complete login. Please try again.');
         return;
       }
-      saveCustomerSession(data);
       navigate('/dashboard');
     } catch (err) {
       console.error('Customer login request failed to reach the API.', err);

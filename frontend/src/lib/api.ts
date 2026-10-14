@@ -15,17 +15,26 @@ export class ApiError extends Error {
   }
 }
 
+let unauthorizedHandler: (() => void) | null = null;
+
+export function setUnauthorizedHandler(handler: (() => void) | null) {
+  unauthorizedHandler = handler;
+}
+
 export async function apiRequest<T>(path: string, options?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`, {
     ...options,
+    credentials: 'include',
     headers: {
       'Content-Type': 'application/json',
       ...options?.headers,
     },
   });
+  if (response.status === 204) return undefined as T;
   const body = (await response.json().catch(() => null)) as (T & ApiErrorBody) | null;
 
   if (!response.ok || body === null) {
+    if (response.status === 401) unauthorizedHandler?.();
     const nestedMessage = typeof body?.error === 'object' ? body.error.message : undefined;
     const legacyMessage = typeof body?.error === 'string' ? body.error : undefined;
     throw new ApiError(
