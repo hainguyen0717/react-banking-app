@@ -14,19 +14,21 @@ This repository is a small banking application used to exercise test tools. Buil
 
 For application feature requests, behavior changes, and bug fixes, coordinate the project agents sequentially. These stages depend on one another, so do not run them in parallel.
 
-1. Spawn `planner` with the user's full request. Ask it to inspect the current implementation and return an implementation-ready plan. It must not edit files.
-2. Review the plan for blocking questions. Make reasonable assumptions for non-blocking details and continue without an approval pause unless the user requested plan-only work.
-3. Spawn `developer` with the original request and the Planner's complete plan. It owns production code, database changes, unit/component tests, contracts, and documentation.
-4. After implementation, spawn `test` with the original request, plan, and Developer summary. It owns API integration tests and API-level validation; UI automation is out of scope.
-5. If `test` finds an application defect, send the evidence back to `developer`, then have `test` rerun or extend the affected API checks. Repeat until the requested behavior passes or a genuine external blocker remains.
-6. The parent agent reviews the combined patch, runs proportionate final checks, and reports the outcome, assumptions, test evidence, and any remaining limitations.
+1. Spawn `business_analyst` with the user's full request. Ask it to elaborate the request into a focused business brief with no more than two or three MVP capabilities. It must not edit files or create a technical plan.
+2. Spawn `planner` with the user's original request and the Business Analyst's complete brief. Ask it to inspect the current implementation and return an implementation-ready plan. It must not edit files.
+3. Review the plan for blocking questions. Make reasonable assumptions for non-blocking details and continue without an approval pause unless the user requested plan-only work.
+4. Spawn `developer` with the original request, Business Analyst brief, and Planner's complete plan. It owns production code, database changes, unit/component tests, contracts, and documentation.
+5. After implementation, spawn `test` with the original request, brief, plan, and Developer summary. It owns API integration tests and API-level validation; UI automation is out of scope.
+6. If `test` finds an application defect, send the evidence back to `developer`, then have `test` rerun or extend the affected API checks. Repeat until the requested behavior passes or a genuine external blocker remains.
+7. The parent agent reviews the combined patch, runs proportionate final checks, and reports the outcome, assumptions, test evidence, and any remaining limitations.
 
-If the user asks only for a plan, stop after the Planner result. If the user asks only for diagnosis, review, documentation, or a narrowly scoped non-application edit, use only the roles that materially help.
+If the user asks only for business elaboration, stop after the Business Analyst result. If the user asks only for a plan, run Business Analyst and Planner, then stop. If the user asks only for diagnosis, review, documentation, or a narrowly scoped non-application edit, use only the roles that materially help.
 
 ## Project skills
 
 Each specialist must read and follow its repo-scoped skill before taking task actions:
 
+- Business Analyst: `$analyze-banking-request` at `.agents/skills/analyze-banking-request/SKILL.md`
 - Planner: `$plan-banking-change` at `.agents/skills/plan-banking-change/SKILL.md`
 - Developer: `$implement-banking-change` at `.agents/skills/implement-banking-change/SKILL.md`
 - Test: `$test-banking-api` at `.agents/skills/test-banking-api/SKILL.md`
@@ -37,7 +39,7 @@ Keep role identity in the custom-agent TOML files and reusable procedures in the
 
 Project hooks live in `.codex/hooks.json` and are enabled in `.codex/config.toml`.
 
-- `SubagentStart` injects the correct repo skill for `planner`, `developer`, and `test`.
+- `SubagentStart` injects the correct repo skill for `business_analyst`, `planner`, `developer`, and `test`.
 - `PreToolUse` blocks a narrow set of commands that can discard work or reset/delete the SQLite database.
 
 Codex requires review and trust for new or changed project hooks. Inspect and trust them through `/hooks`; do not bypass hook trust for routine work.
@@ -45,6 +47,14 @@ Codex requires review and trust for new or changed project hooks. Inspect and tr
 Validate hook behavior with `python3 -m unittest discover -s .codex/hooks/tests` after changing hook code or configuration.
 
 ## Role boundaries
+
+### Business Analyst
+
+- Read-only.
+- Turns a short product request into a concise business brief before technical planning.
+- Selects no more than two or three coherent MVP capabilities.
+- Describes user flow, left-navigation placement when relevant, essential record relationships, business rules, acceptance outcomes, assumptions, and deferred options.
+- Does not propose files, database schemas, APIs, libraries, implementation steps, or production-scale banking architecture.
 
 ### Planner
 

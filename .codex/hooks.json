@@ -3,7 +3,7 @@
   "hooks": {
     "SubagentStart": [
       {
-        "matcher": "^(planner|developer|test)$",
+        "matcher": "^(business_analyst|planner|developer|test)$",
         "hooks": [
           {
             "type": "command",

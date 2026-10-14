@@ -7,12 +7,13 @@ description: Turn a React banking-app feature, bug fix, API, database, or UI req
 
 ## Inputs
 
-Use the original request and the current repository state. Treat documentation as supporting evidence, not proof of the active runtime.
+Use the original request, the Business Analyst's MVP brief when provided, and the current repository state. Treat the brief as product scope rather than technical design, and treat documentation as supporting evidence rather than proof of the active runtime.
 
 ## Workflow
 
 1. Inspect the worktree and trace the executable paths that own the requested behavior.
 2. State the goal, acceptance criteria, and explicit assumptions. Surface only decisions that materially change behavior.
+   Preserve the Business Analyst's two-to-three-capability MVP boundary unless executable constraints require a smaller scope; place additional ideas in exclusions rather than silently expanding them.
 3. Map data changes: Prisma models, relations, constraints, migration, seed data, and lifecycle.
 4. Map backend changes: active routes, services, validation, authorization/ownership, response shapes, error cases, and health effects.
 5. Map frontend changes: routes, components, state, API calls, loading/empty/error states, styles, and stable `data-testid` locators.

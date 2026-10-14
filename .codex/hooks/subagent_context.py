@@ -6,6 +6,10 @@ import sys
 
 
 SKILLS = {
+    "business_analyst": (
+        "$analyze-banking-request",
+        ".agents/skills/analyze-banking-request/SKILL.md",
+    ),
     "planner": (
         "$plan-banking-change",
         ".agents/skills/plan-banking-change/SKILL.md",

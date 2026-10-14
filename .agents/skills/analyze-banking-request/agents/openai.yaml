@@ -1,0 +1,4 @@
+interface:
+  display_name: "Analyze Banking Request"
+  short_description: "Expand requests into focused banking MVP briefs"
+  default_prompt: "Use $analyze-banking-request to elaborate this banking request into a focused MVP brief for the Planner."

@@ -22,6 +22,7 @@ def run_hook(script_name: str, event: dict) -> Optional[dict]:
 class SubagentContextTests(unittest.TestCase):
     def test_routes_each_custom_role_to_its_skill(self) -> None:
         expected = {
+            "business_analyst": "$analyze-banking-request",
             "planner": "$plan-banking-change",
             "developer": "$implement-banking-change",
             "test": "$test-banking-api",
