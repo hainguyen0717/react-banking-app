@@ -13,6 +13,7 @@ type AuthContextValue = AuthState & {
   retry: () => Promise<void>;
   login: (email: string, password: string) => Promise<CustomerProfile>;
   logout: () => Promise<void>;
+  updateProfile: (profile: Pick<CustomerProfile, 'firstName' | 'lastName' | 'address'>) => Promise<CustomerProfile>;
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -63,7 +64,13 @@ export function AuthProvider({ children, initialState }: { children: ReactNode; 
     setState({ status: 'anonymous', customer: null, error: null });
   }, []);
 
-  const value = useMemo<AuthContextValue>(() => ({ ...state, retry: loadSession, login, logout }), [state, loadSession, login, logout]);
+  const updateProfile = useCallback(async (profile: Pick<CustomerProfile, 'firstName' | 'lastName' | 'address'>) => {
+    const customer = await apiRequest<CustomerProfile>('/api/profile', { method: 'PUT', body: JSON.stringify(profile) });
+    setState({ status: 'authenticated', customer, error: null });
+    return customer;
+  }, []);
+
+  const value = useMemo<AuthContextValue>(() => ({ ...state, retry: loadSession, login, logout, updateProfile }), [state, loadSession, login, logout, updateProfile]);
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 

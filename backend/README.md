@@ -13,9 +13,17 @@ npm run seed
 npm run dev
 ```
 
-The backend listens on `PORT` (`4000` in `.env.example`, with a source fallback of `3001`). `DATABASE_URL=file:./dev.db` stores the database under `prisma/dev.db` because Prisma resolves relative SQLite paths from the schema directory.
+The backend listens on `PORT`, with a source fallback of `3001` when it is unset. The checked-in `.env.example` explicitly overrides it to `4000` to match the current frontend default. `DATABASE_URL=file:./dev.db` stores the database under `prisma/dev.db` because Prisma resolves relative SQLite paths from the schema directory.
 
-Opaque sessions use `SESSION_IDLE_TIMEOUT_SECONDS` (default `1800`) and `SESSION_ABSOLUTE_TIMEOUT_SECONDS` (default `28800`). `FRONTEND_ORIGINS` is a comma-separated exact allowlist used by both credentialed CORS and mutation-origin checks. Development cookies are `HttpOnly`, `SameSite=Lax`, and path `/`; production adds `Secure` and uses `SameSite=Strict`.
+Opaque sessions use `SESSION_IDLE_TIMEOUT_SECONDS` (default `1800`) and `SESSION_ABSOLUTE_TIMEOUT_SECONDS` (default `28800`). `FRONTEND_ORIGINS` is a comma-separated exact allowlist used by credentialed CORS and mutation-origin checks. Mutations also accept an exact origin matching the API request's protocol, host, and port so the same-origin Swagger UI works; this does not broaden CORS. Development cookies are `HttpOnly`, `SameSite=Lax`, and path `/`; production adds `Secure` and uses `SameSite=Strict`.
+
+## Swagger UI
+
+Open `/docs/` on the configured backend origin; with the copied development environment, that is [http://localhost:4000/docs/](http://localhost:4000/docs/). `server.js` falls back to port `3001` only when `PORT` is unset. `/docs` redirects to the canonical trailing-slash URL, while `/docs/openapi.json` remains the single active contract used by the UI. Swagger UI and its assets are bundled locally through `swagger-ui-express`; there is no CDN or paid service.
+
+Standard **Try it out** requests use the serving origin and include browser credentials. Run `POST /api/login` first and the browser will retain the returned HttpOnly `eb_session` cookie for later protected calls. The UI does not read, embed, or persist the cookie, password, or authorization value. Existing authentication, ownership, validation, `401`/`403`, and trusted-origin behavior still applies.
+
+The in-process scheduled-transfer worker runs once at startup and then every `SCHEDULED_TRANSFER_POLL_INTERVAL_MS` (default `1000`). Shutdown stops and awaits the worker before Prisma disconnects, so due work never races client teardown.
 
 The seed command requires `SEED_CUSTOMER_EMAIL`, `SEED_CUSTOMER_PASSWORD`, `SEED_CUSTOMER_FIRST_NAME`, and `SEED_CUSTOMER_LAST_NAME`. Optional profile variables are documented in `.env.example`; rerunning the seed updates the matching email without exposing its password hash.
 
@@ -31,6 +39,8 @@ The seed command requires `SEED_CUSTOMER_EMAIL`, `SEED_CUSTOMER_PASSWORD`, `SEED
 - Transfers between Express Bank accounts are atomic: the service debits, credits, and creates one `Transfer` record in one Prisma transaction. The destination may belong to the same customer or another customer.
 - Transfers cannot overdraw the source or send to the same account. A rejected transfer has no balance or history side effects.
 - Transaction history derives `SENT` or `RECEIVED` from the viewed account and returns the counterparty account number.
+- Scheduled transfers are customer-private, one-time instructions. Creating one checks ownership, destination, amount, future time, and current funds without reserving money. At the due time the worker atomically claims it, rechecks the same transfer rules, and either creates a normal transfer/history record as `COMPLETED` or records a side-effect-free `FAILED` result.
+- Cards belong to the authenticated holder even when linked to a joint account. `ACTIVE` cards may be temporarily `LOCKED`, locked cards may be unlocked, and either may be permanently `DISABLED`. Responses expose only `••••` plus four digits. Five deterministic display-only sample purchases are created with every card and never change account balances.
 
 SQLite `CHECK` constraints enforce the three account types, valid `SINGLE`/`JOINT` ownership shape, different joint owners, AUD currency, non-negative balances, positive transfer amounts, and distinct transfer accounts. Prisma uses strings for the semantic account-type and ownership enums because the current SQLite connector does not provide native enum types.
 
@@ -41,13 +51,21 @@ SQLite `CHECK` constraints enforce the three account types, valid `SINGLE`/`JOIN
 | `POST` | `/api/customers` | Register a customer with a bcrypt password hash. |
 | `POST` | `/api/login` | Authenticate and return a non-sensitive customer profile. |
 | `GET` | `/api/session` | Restore the current authenticated safe customer profile. |
+| `PUT` | `/api/profile` | Update required personal name and address fields. |
 | `POST` | `/api/logout` | Revoke the current session and clear its cookie. |
 | `GET` | `/api/accounts` | List accounts primarily or jointly owned by the authenticated customer. |
 | `POST` | `/api/accounts` | Create an AUD account for the authenticated customer. |
 | `POST` | `/api/joint-accounts` | Create one account shared with a different active customer identified by registered email. |
 | `POST` | `/api/transfers` | Atomically transfer funds by destination account number. |
+| `GET`, `POST` | `/api/scheduled-transfers` | List private schedules or create a one-time future transfer. |
+| `GET`, `POST` | `/api/cards` | List holder-owned cards or open one with five sample transactions. |
+| `GET` | `/api/cards/:cardId` | Get one holder-owned masked card. |
+| `POST` | `/api/cards/:cardId/lock` | Temporarily lock an active card. |
+| `POST` | `/api/cards/:cardId/unlock` | Unlock a locked card. |
+| `POST` | `/api/cards/:cardId/disable` | Permanently disable an active or locked card. |
 | `GET` | `/api/accounts/:accountId/transactions` | List newest-first directional transfer history for an owned account. |
 | `GET` | `/api/health` | Check database connectivity. |
+| `GET` | `/docs`, `/docs/` | Redirect to or render the public Swagger UI. |
 | `GET` | `/docs/openapi.json` | Return the active OpenAPI 3.0 contract. |
 
 Protected routes derive the actor exclusively from the verified `eb_session` cookie. Client path/body identity is not accepted. Account response `customerId` remains creator/legacy metadata; `owners` is the complete safe owner set, and either joint owner is authorized. Missing or invalid authentication is `401`; authenticated cross-owner access and untrusted mutation origins are `403`.
@@ -57,12 +75,16 @@ API errors use `{ "error": "Human-readable message" }`. Transfers return `400` f
 ## Data model
 
 - `Customer` holds normalized login/profile data and may be a primary or joint co-owner.
+- `Customer.address` remains nullable for migration compatibility, but profile updates require a non-blank address.
 - `Account` holds one unique `EXB-#########` number, ownership mode, primary owner, optional co-owner, product type, optional display name, one shared balance, currency, and timestamps.
 - `Transfer` links source and destination accounts and stores integer cents, an optional description, and creation time.
 - `AuthSession` stores only a unique SHA-256 token hash, customer relation, activity timestamps, and absolute expiry. Raw tokens exist only transiently and in the HttpOnly cookie.
+- `ScheduledTransfer` stores the authenticated creator, resolved account IDs, due instant, processing status, safe terminal reason, and optional resulting transfer.
+- `Card` stores its holder, linked account, internal last four digits and state; `CardTransaction` stores exactly five deterministic samples per newly opened card.
 
 Migration `0002_accounts_and_transfers` adds the account and transfer tables without resetting existing customers. Migration `0003_joint_accounts` preserves account IDs and transfer references while marking existing accounts `SINGLE` and adding the optional co-owner relation.
 Migration `0004_auth_sessions` adds revocable server-side sessions without changing existing customer, account, or transfer data.
+Migration `0005_profile_schedules_and_cards` adds the nullable legacy-compatible address plus scheduled-transfer, card, and card-transaction tables without resetting existing rows.
 
 The bounded opaque-session and trusted-origin choices follow the [OWASP Session Management Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html), [OWASP REST Security Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/REST_Security_Cheat_Sheet.html), and Node's cryptographic [`randomBytes`](https://nodejs.org/api/crypto.html#cryptorandombytessize-callback) primitive.
 

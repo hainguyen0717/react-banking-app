@@ -41,6 +41,20 @@ test('transferMoney atomically debits, credits and records one transfer', async 
   assert.equal(transfer.destinationAccountNumber, 'EXB-000000002');
 });
 
+test('transferMoney uses a conditional debit when supported to prevent concurrent overdrafts', async () => {
+  let debitWhere;
+  const tx = {
+    account: {
+      findUnique: async ({ where }) => where.id ? { id: 'account-1', customerId: 'customer-1', coOwnerCustomerId: null, accountNumber: 'EXB-1', balanceCents: 500 } : { id: 'account-2', accountNumber: 'EXB-2' },
+      updateMany: async (args) => { debitWhere = args.where; return { count: 1 }; },
+      update: async () => {},
+    },
+    transfer: { create: async (args) => ({ id: 'transfer-1', ...args.data, createdAt: new Date() }) },
+  };
+  await createTransferService({ prisma: { $transaction: async (operation) => operation(tx) } }).transferMoney({ customerId: 'customer-1', sourceAccountId: 'account-1', destinationAccountNumber: 'EXB-2', amountCents: 200 });
+  assert.deepEqual(debitWhere, { id: 'account-1', balanceCents: { gte: 200 } });
+});
+
 test('a joint co-owner can transfer from the shared account', async () => {
   const { prisma, calls } = createTransactionPrisma({ sourceCustomerId: 'customer-1', coOwnerCustomerId: 'customer-2' });
   const service = createTransferService({ prisma });

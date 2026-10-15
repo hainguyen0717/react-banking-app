@@ -11,16 +11,17 @@ Use the original request, the Business Analyst's MVP brief when provided, and th
 
 ## Workflow
 
-1. Inspect the worktree and trace the executable paths that own the requested behavior.
-2. State the goal, acceptance criteria, and explicit assumptions. Surface only decisions that materially change behavior.
+1. Before any planning, read `docs/CURRENT_FUNCTIONS_AND_APIS.md` completely. Compare the original request and Business Analyst brief with that inventory and classify each requested capability as already implemented, partially implemented, or new. Do not plan duplicate behavior; verify apparent documentation conflicts against executable code.
+2. Inspect the worktree and trace the executable paths that own the requested behavior.
+3. State the goal, acceptance criteria, and explicit assumptions. Surface only decisions that materially change behavior.
    Preserve the Business Analyst's two-to-three-capability MVP boundary unless executable constraints require a smaller scope; place additional ideas in exclusions rather than silently expanding them.
-3. Map data changes: Prisma models, relations, constraints, migration, seed data, and lifecycle.
-4. Map backend changes: active routes, services, validation, authorization/ownership, response shapes, error cases, and health effects.
-5. Map frontend changes: routes, components, state, API calls, loading/empty/error states, styles, and stable `data-testid` locators.
-6. Map contract and documentation changes: OpenAPI or JSON schema, examples, and READMEs.
-7. Separate Developer-owned unit/component tests from Test-agent-owned HTTP integration scenarios.
-8. Order the work by dependency and list exact likely files or clearly identified new files.
-9. Keep the solution proportional to a deterministic test-tool demo. Exclude production-only infrastructure unless the request requires it.
+4. Map data changes: Prisma models, relations, constraints, migration, seed data, and lifecycle.
+5. Map backend changes: active routes, services, validation, authorization/ownership, response shapes, error cases, and health effects.
+6. Map frontend changes: routes, components, state, API calls, loading/empty/error states, styles, and stable `data-testid` locators.
+7. Map contract and documentation changes: OpenAPI or JSON schema, examples, and READMEs.
+8. Separate Developer-owned unit/component tests from Test-agent-owned HTTP integration scenarios.
+9. Order the work by dependency and list exact likely files or clearly identified new files.
+10. Keep the solution proportional to a deterministic test-tool demo. Exclude production-only infrastructure unless the request requires it.
 
 ## Authentication planning gate
 

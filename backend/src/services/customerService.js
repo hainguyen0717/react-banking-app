@@ -7,6 +7,7 @@ const CUSTOMER_PROFILE_SELECT = {
   email: true,
   firstName: true,
   lastName: true,
+  address: true,
   phoneNumber: true,
   dateOfBirth: true,
   lastLoginAt: true,
@@ -38,6 +39,22 @@ function validateRegistration({ email, password, firstName, lastName } = {}) {
     firstName: normalizedFirstName,
     lastName: normalizedLastName,
   };
+}
+
+function validateProfileUpdate({ firstName, lastName, address } = {}) {
+  const normalizedFirstName = typeof firstName === 'string' ? firstName.trim() : '';
+  const normalizedLastName = typeof lastName === 'string' ? lastName.trim() : '';
+  const normalizedAddress = typeof address === 'string' ? address.trim() : '';
+  if (!normalizedFirstName || normalizedFirstName.length > 100) {
+    throw new BankingError(400, 'INVALID_FIRST_NAME', 'First name is required and must be 100 characters or fewer.');
+  }
+  if (!normalizedLastName || normalizedLastName.length > 100) {
+    throw new BankingError(400, 'INVALID_LAST_NAME', 'Last name is required and must be 100 characters or fewer.');
+  }
+  if (!normalizedAddress || normalizedAddress.length > 250) {
+    throw new BankingError(400, 'INVALID_ADDRESS', 'Address is required and must be 250 characters or fewer.');
+  }
+  return { firstName: normalizedFirstName, lastName: normalizedLastName, address: normalizedAddress };
 }
 
 function createCustomerService({ prisma = getPrismaClient(), passwordHasher = bcrypt } = {}) {
@@ -91,7 +108,16 @@ function createCustomerService({ prisma = getPrismaClient(), passwordHasher = bc
     }
   };
 
-  return { authenticateCustomer, createCustomer };
+  const updateProfile = async (customerId, input) => {
+    const valid = validateProfileUpdate(input);
+    return prisma.customer.update({
+      where: { id: customerId },
+      data: valid,
+      select: CUSTOMER_PROFILE_SELECT,
+    });
+  };
+
+  return { authenticateCustomer, createCustomer, updateProfile };
 }
 
 const defaultService = createCustomerService();
@@ -100,7 +126,9 @@ module.exports = {
   CUSTOMER_PROFILE_SELECT,
   normalizeEmail,
   validateRegistration,
+  validateProfileUpdate,
   createCustomerService,
   authenticateCustomer: defaultService.authenticateCustomer,
   createCustomer: defaultService.createCustomer,
+  updateProfile: defaultService.updateProfile,
 };

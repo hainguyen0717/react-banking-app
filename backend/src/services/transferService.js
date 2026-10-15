@@ -41,59 +41,68 @@ function validateTransferInput({ customerId, sourceAccountId, destinationAccount
   };
 }
 
+async function executeTransferInTransaction(tx, {
+  customerId,
+  sourceAccountId,
+  destinationAccountId,
+  destinationAccountNumber,
+  amountCents,
+  description,
+}) {
+  const source = await tx.account.findUnique({
+    where: { id: sourceAccountId },
+    select: { id: true, customerId: true, coOwnerCustomerId: true, accountNumber: true, balanceCents: true },
+  });
+  if (!source) throw new BankingError(404, 'SOURCE_ACCOUNT_NOT_FOUND', 'Source account was not found.');
+  if (source.customerId !== customerId && source.coOwnerCustomerId !== customerId) {
+    throw new BankingError(403, 'SOURCE_ACCOUNT_FORBIDDEN', 'The source account does not belong to this customer.');
+  }
+
+  const destination = await tx.account.findUnique({
+    where: destinationAccountId ? { id: destinationAccountId } : { accountNumber: destinationAccountNumber },
+    select: { id: true, accountNumber: true },
+  });
+  if (!destination) throw new BankingError(404, 'DESTINATION_ACCOUNT_NOT_FOUND', 'Destination account was not found.');
+  if (destination.id === source.id) {
+    throw new BankingError(400, 'SELF_TRANSFER', 'Source and destination accounts must be different.');
+  }
+
+  if (typeof tx.account.updateMany === 'function') {
+    const debited = await tx.account.updateMany({
+      where: { id: source.id, balanceCents: { gte: amountCents } },
+      data: { balanceCents: { decrement: amountCents } },
+    });
+    if (debited.count !== 1) {
+      throw new BankingError(409, 'INSUFFICIENT_FUNDS', 'The source account has insufficient funds.');
+    }
+  } else {
+    // Compatibility for lightweight unit-test transaction doubles.
+    if (source.balanceCents < amountCents) {
+      throw new BankingError(409, 'INSUFFICIENT_FUNDS', 'The source account has insufficient funds.');
+    }
+    await tx.account.update({ where: { id: source.id }, data: { balanceCents: { decrement: amountCents } } });
+  }
+  await tx.account.update({
+    where: { id: destination.id },
+    data: { balanceCents: { increment: amountCents } },
+  });
+  const transfer = await tx.transfer.create({
+    data: { sourceAccountId: source.id, destinationAccountId: destination.id, amountCents, description },
+    select: TRANSFER_SELECT,
+  });
+  return {
+    ...transfer,
+    sourceAccountNumber: source.accountNumber,
+    destinationAccountNumber: destination.accountNumber,
+  };
+}
+
 function createTransferService({ prisma = getPrismaClient() } = {}) {
   const transferMoney = async (input) => {
     const valid = validateTransferInput(input);
 
     return prisma.$transaction(async (tx) => {
-      const source = await tx.account.findUnique({
-        where: { id: valid.sourceAccountId },
-        select: { id: true, customerId: true, coOwnerCustomerId: true, accountNumber: true, balanceCents: true },
-      });
-      if (!source) {
-        throw new BankingError(404, 'SOURCE_ACCOUNT_NOT_FOUND', 'Source account was not found.');
-      }
-      if (source.customerId !== valid.customerId && source.coOwnerCustomerId !== valid.customerId) {
-        throw new BankingError(403, 'SOURCE_ACCOUNT_FORBIDDEN', 'The source account does not belong to this customer.');
-      }
-
-      const destination = await tx.account.findUnique({
-        where: { accountNumber: valid.destinationAccountNumber },
-        select: { id: true, accountNumber: true },
-      });
-      if (!destination) {
-        throw new BankingError(404, 'DESTINATION_ACCOUNT_NOT_FOUND', 'Destination account was not found.');
-      }
-      if (destination.id === source.id) {
-        throw new BankingError(400, 'SELF_TRANSFER', 'Source and destination accounts must be different.');
-      }
-      if (source.balanceCents < valid.amountCents) {
-        throw new BankingError(409, 'INSUFFICIENT_FUNDS', 'The source account has insufficient funds.');
-      }
-
-      await tx.account.update({
-        where: { id: source.id },
-        data: { balanceCents: { decrement: valid.amountCents } },
-      });
-      await tx.account.update({
-        where: { id: destination.id },
-        data: { balanceCents: { increment: valid.amountCents } },
-      });
-      const transfer = await tx.transfer.create({
-        data: {
-          sourceAccountId: source.id,
-          destinationAccountId: destination.id,
-          amountCents: valid.amountCents,
-          description: valid.description,
-        },
-        select: TRANSFER_SELECT,
-      });
-
-      return {
-        ...transfer,
-        sourceAccountNumber: source.accountNumber,
-        destinationAccountNumber: destination.accountNumber,
-      };
+      return executeTransferInTransaction(tx, valid);
     });
   };
 
@@ -143,6 +152,7 @@ const defaultService = createTransferService();
 module.exports = {
   TRANSFER_SELECT,
   validateTransferInput,
+  executeTransferInTransaction,
   createTransferService,
   transferMoney: defaultService.transferMoney,
   listTransactions: defaultService.listTransactions,

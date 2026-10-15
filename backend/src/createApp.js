@@ -1,9 +1,12 @@
 const express = require('express');
 const cors = require('cors');
+const swaggerUi = require('swagger-ui-express');
 const customerService = require('./services/customerService');
 const accountService = require('./services/accountService');
 const transferService = require('./services/transferService');
 const sessionService = require('./services/sessionService');
+const scheduledTransferService = require('./services/scheduledTransferService');
+const cardService = require('./services/cardService');
 const { BankingError } = require('./errors/BankingError');
 const { getPrismaClient } = require('./lib/prisma');
 const { getSessionConfig, getFrontendOrigins } = require('./config/sessionConfig');
@@ -13,6 +16,15 @@ const { readSessionCookie, serializeSessionCookie, serializeClearedSessionCookie
 const openApiDocument = require('./docs/openapi.json');
 
 const LOCAL_FRONTEND_ORIGINS = getFrontendOrigins();
+const SWAGGER_UI_OPTIONS = {
+  customSiteTitle: 'Express Bank Demo API',
+  customCss: '',
+  swaggerOptions: {
+    url: '/docs/openapi.json',
+    withCredentials: true,
+    persistAuthorization: false,
+  },
+};
 
 const defaultLogger = {
   info: (...args) => console.log(...args),
@@ -44,6 +56,8 @@ function createDefaultServices(prisma, sessionConfig = getSessionConfig()) {
     ...accountService.createAccountService({ prisma }),
     ...transferService.createTransferService({ prisma }),
     ...sessionService.createSessionService({ prisma, config: sessionConfig }),
+    ...scheduledTransferService.createScheduledTransferService({ prisma }),
+    ...cardService.createCardService({ prisma }),
   };
 }
 
@@ -125,6 +139,14 @@ function createApp({
     res.json(req.auth.customer);
   });
 
+  app.put('/api/profile', authenticate, trustedOrigin, async (req, res) => {
+    try {
+      return res.json(await resolvedServices.updateProfile(req.auth.customer.id, req.body));
+    } catch (error) {
+      return handleApiError(error, res, logger, 'Failed to update profile');
+    }
+  });
+
   app.post('/api/logout', authenticate, trustedOrigin, async (req, res) => {
     try {
       await resolvedServices.deleteSession(req.auth.session.id);
@@ -177,6 +199,57 @@ function createApp({
     }
   });
 
+  app.post('/api/scheduled-transfers', authenticate, trustedOrigin, async (req, res) => {
+    try {
+      const schedule = await resolvedServices.createScheduledTransfer(req.auth.customer.id, req.body);
+      return res.status(201).json(schedule);
+    } catch (error) {
+      return handleApiError(error, res, logger, 'Failed to schedule transfer');
+    }
+  });
+
+  app.get('/api/scheduled-transfers', authenticate, async (req, res) => {
+    try {
+      return res.json({ scheduledTransfers: await resolvedServices.listScheduledTransfers(req.auth.customer.id) });
+    } catch (error) {
+      return handleApiError(error, res, logger, 'Failed to list scheduled transfers');
+    }
+  });
+
+  app.get('/api/cards', authenticate, async (req, res) => {
+    try {
+      return res.json({ cards: await resolvedServices.listCards(req.auth.customer.id) });
+    } catch (error) {
+      return handleApiError(error, res, logger, 'Failed to list cards');
+    }
+  });
+
+  app.post('/api/cards', authenticate, trustedOrigin, async (req, res) => {
+    try {
+      return res.status(201).json(await resolvedServices.createCard(req.auth.customer.id, req.body));
+    } catch (error) {
+      return handleApiError(error, res, logger, 'Failed to create card');
+    }
+  });
+
+  app.get('/api/cards/:cardId', authenticate, async (req, res) => {
+    try {
+      return res.json(await resolvedServices.getCard(req.auth.customer.id, req.params.cardId));
+    } catch (error) {
+      return handleApiError(error, res, logger, 'Failed to get card');
+    }
+  });
+
+  for (const [action, serviceName] of [['lock', 'lockCard'], ['unlock', 'unlockCard'], ['disable', 'disableCard']]) {
+    app.post(`/api/cards/:cardId/${action}`, authenticate, trustedOrigin, async (req, res) => {
+      try {
+        return res.json(await resolvedServices[serviceName](req.auth.customer.id, req.params.cardId));
+      } catch (error) {
+        return handleApiError(error, res, logger, `Failed to ${action} card`);
+      }
+    });
+  }
+
   app.get('/api/accounts/:accountId/transactions', authenticate, async (req, res) => {
     try {
       const transactions = await resolvedServices.listTransactions(
@@ -192,6 +265,16 @@ function createApp({
   app.get('/docs/openapi.json', (_req, res) => {
     res.json(openApiDocument);
   });
+
+  app.get(/^\/docs$/, (_req, res) => {
+    res.redirect(308, '/docs/');
+  });
+
+  app.use(
+    '/docs/',
+    swaggerUi.serveFiles(null, SWAGGER_UI_OPTIONS),
+    swaggerUi.setup(null, SWAGGER_UI_OPTIONS),
+  );
 
   app.get('/api/health', async (_req, res) => {
     try {
@@ -231,4 +314,5 @@ module.exports = {
   createDefaultServices,
   resolveCorsOrigin,
   handleApiError,
+  SWAGGER_UI_OPTIONS,
 };

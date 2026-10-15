@@ -14,6 +14,11 @@ function AuthenticatedAction() {
   return <button data-testid="protected-action" onClick={() => { void apiRequest('/api/accounts').catch(() => undefined); }}>{auth.customer?.firstName}</button>;
 }
 
+function ProfileAction() {
+  const auth = useAuth();
+  return <button data-testid="profile-action" onClick={() => { void auth.updateProfile({ firstName: 'Grace', lastName: 'Hopper', address: '1 Navy Way' }); }}>{auth.customer?.firstName} · {auth.customer?.address}</button>;
+}
+
 function renderProtected() {
   return render(
     <AuthProvider>
@@ -67,5 +72,13 @@ describe('AuthProvider and ProtectedRoute', () => {
     renderProtected();
     fireEvent.click(await screen.findByTestId('protected-action'));
     expect(await screen.findByTestId('login-route')).toBeInTheDocument();
+  });
+
+  it('replaces the authenticated profile after a successful personal-information update', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(response({ id: 'customer-1', email: 'ada@example.com', firstName: 'Grace', lastName: 'Hopper', address: '1 Navy Way' }));
+    render(<AuthProvider initialState={{ status: 'authenticated', customer: { id: 'customer-1', email: 'ada@example.com', firstName: 'Ada', lastName: 'Lovelace', address: null }, error: null }}><ProfileAction /></AuthProvider>);
+    fireEvent.click(screen.getByTestId('profile-action'));
+    expect(await screen.findByText('Grace · 1 Navy Way')).toBeInTheDocument();
+    expect(globalThis.fetch).toHaveBeenCalledWith(expect.stringContaining('/api/profile'), expect.objectContaining({ method: 'PUT', credentials: 'include' }));
   });
 });

@@ -48,21 +48,44 @@ test('authentication middleware rejects missing and malformed cookies and attach
   assert.equal(nextCalls, 1);
 });
 
-test('trusted-origin middleware allows exact origins and OPTIONS but rejects missing, null and hostile origins', () => {
+test('trusted-origin middleware allows configured and exact request origins plus passive methods', () => {
   const middleware = createTrustedOriginMiddleware(new Set(['http://localhost:5173']));
   const allowed = [
     { method: 'OPTIONS', headers: {} },
     { method: 'GET', headers: {} },
-    { method: 'POST', headers: { origin: 'http://localhost:5173' } },
+    { method: 'POST', protocol: 'http', headers: { host: 'localhost:3001', origin: 'http://localhost:5173' } },
+    { method: 'POST', protocol: 'http', headers: { host: 'localhost:3001', origin: 'http://localhost:3001' } },
   ];
   for (const req of allowed) {
     let nextCalls = 0;
     middleware(req, response(), () => { nextCalls += 1; });
     assert.equal(nextCalls, 1);
   }
-  for (const origin of [undefined, 'null', 'http://localhost:5173.evil.example']) {
+});
+
+test('trusted-origin middleware strictly rejects malformed, foreign and same-origin lookalike mutations', () => {
+  const middleware = createTrustedOriginMiddleware(new Set(['http://localhost:5173']));
+  const rejectedOrigins = [
+    undefined,
+    'null',
+    'not-an-origin',
+    'http://localhost:3001/path',
+    'https://localhost:3001',
+    'http://localhost:3002',
+    'http://localhost',
+    'http://localhost:3001.evil.example',
+    'http://localhost:5173.evil.example',
+  ];
+
+  for (const origin of rejectedOrigins) {
     const res = response();
-    middleware({ method: 'POST', headers: { origin } }, res, () => {});
+    let nextCalls = 0;
+    middleware({
+      method: 'POST',
+      protocol: 'http',
+      headers: { host: 'localhost:3001', origin },
+    }, res, () => { nextCalls += 1; });
     assert.equal(res.statusCode, 403);
+    assert.equal(nextCalls, 0);
   }
 });

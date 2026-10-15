@@ -11,14 +11,15 @@ Use the user's original request and the repository's documented functions. Inspe
 
 ## Workflow
 
-1. Restate the user goal in plain business language.
-2. Triage the request against existing functions and identify the smallest useful addition.
-3. Expand it into **two or three capabilities maximum**. Count the primary function as one capability and select only the highest-value supporting actions.
-4. Describe where users find the function, including its left-navigation group when it has UI.
-5. Describe essential relationships to existing customers, accounts, transfers, or other records.
-6. State simple user-visible rules, access expectations, and success/error outcomes.
-7. Record reasonable assumptions and explicitly defer optional enhancements.
-8. Produce a concise brief for the Planner. Do not propose files, schemas, endpoints, libraries, or implementation steps.
+1. Before any analysis, read `docs/CURRENT_FUNCTIONS_AND_APIS.md` completely. Compare the request with that inventory and classify each requested capability as already implemented, partially implemented, or new. Do not duplicate an existing function; elaborate only the missing behavior and note any apparent documentation conflict.
+2. Restate the user goal in plain business language.
+3. Triage the request against existing functions and identify the smallest useful addition.
+4. Expand it into **two or three capabilities maximum**. Count the primary function as one capability and select only the highest-value supporting actions.
+5. Describe where users find the function, including its left-navigation group when it has UI.
+6. Describe essential relationships to existing customers, accounts, transfers, or other records.
+7. State simple user-visible rules, access expectations, and success/error outcomes.
+8. Record reasonable assumptions and explicitly defer optional enhancements.
+9. Produce a concise brief for the Planner. Do not propose files, schemas, endpoints, libraries, or implementation steps.
 
 ## MVP guardrails
 

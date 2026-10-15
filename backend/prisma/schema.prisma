@@ -13,6 +13,7 @@ model Customer {
   passwordHash String
   firstName    String
   lastName     String
+  address      String?
   phoneNumber  String?
   dateOfBirth  DateTime?
   isActive     Boolean  @default(true)
@@ -22,6 +23,8 @@ model Customer {
   primaryAccounts      Account[] @relation("PrimaryOwnerAccounts")
   jointlyOwnedAccounts Account[] @relation("CoOwnerAccounts")
   sessions              AuthSession[]
+  scheduledTransfers    ScheduledTransfer[]
+  cards                  Card[]
 }
 
 model AuthSession {
@@ -53,6 +56,9 @@ model Account {
   coOwner              Customer?  @relation("CoOwnerAccounts", fields: [coOwnerCustomerId], references: [id], onDelete: Restrict)
   outgoingTransfers    Transfer[] @relation("OutgoingTransfers")
   incomingTransfers    Transfer[] @relation("IncomingTransfers")
+  scheduledOutgoingTransfers ScheduledTransfer[] @relation("ScheduledOutgoingTransfers")
+  scheduledIncomingTransfers ScheduledTransfer[] @relation("ScheduledIncomingTransfers")
+  cards                Card[]
 
   @@index([customerId])
   @@index([coOwnerCustomerId])
@@ -67,7 +73,60 @@ model Transfer {
   createdAt            DateTime @default(now())
   sourceAccount        Account  @relation("OutgoingTransfers", fields: [sourceAccountId], references: [id], onDelete: Restrict)
   destinationAccount   Account  @relation("IncomingTransfers", fields: [destinationAccountId], references: [id], onDelete: Restrict)
+  scheduledTransfer    ScheduledTransfer?
 
   @@index([sourceAccountId, createdAt])
   @@index([destinationAccountId, createdAt])
+}
+
+model ScheduledTransfer {
+  id                   String    @id @default(uuid())
+  customerId           String
+  sourceAccountId      String
+  destinationAccountId String
+  amountCents          Int
+  description          String?
+  scheduledFor         DateTime
+  status               String    @default("PENDING")
+  failureReason        String?
+  processedAt          DateTime?
+  transferId           String?   @unique
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+  customer             Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  sourceAccount        Account   @relation("ScheduledOutgoingTransfers", fields: [sourceAccountId], references: [id], onDelete: Restrict)
+  destinationAccount   Account   @relation("ScheduledIncomingTransfers", fields: [destinationAccountId], references: [id], onDelete: Restrict)
+  transfer             Transfer? @relation(fields: [transferId], references: [id], onDelete: SetNull)
+
+  @@index([customerId, scheduledFor])
+  @@index([status, scheduledFor])
+}
+
+model Card {
+  id           String            @id @default(uuid())
+  customerId   String
+  accountId    String
+  lastFour     String
+  status       String            @default("ACTIVE")
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+  customer     Customer          @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  account      Account           @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  transactions CardTransaction[]
+
+  @@index([customerId, createdAt])
+  @@index([accountId])
+}
+
+model CardTransaction {
+  id             String   @id @default(uuid())
+  cardId         String
+  sampleSequence Int
+  merchant       String
+  amountCents    Int
+  occurredAt     DateTime
+  card           Card     @relation(fields: [cardId], references: [id], onDelete: Cascade)
+
+  @@unique([cardId, sampleSequence])
+  @@index([cardId, occurredAt])
 }

@@ -23,6 +23,27 @@
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.2);
   --shadow-md: 0 12px 30px rgba(0, 0, 0, 0.18);
   --motion-fast: 180ms ease;
+  --dashboard-background: #041022;
+  --dashboard-background-raised: #0a1b33;
+  --dashboard-surface-fallback: #102846;
+  --dashboard-surface-glass: rgba(86, 142, 199, 0.2);
+  --dashboard-surface-glass-strong: rgba(72, 127, 184, 0.28);
+  --dashboard-control: rgba(5, 20, 40, 0.72);
+  --dashboard-border: rgba(191, 219, 254, 0.3);
+  --dashboard-border-strong: rgba(147, 197, 253, 0.58);
+  --dashboard-foreground: #f8fbff;
+  --dashboard-muted-foreground: #c4d2e4;
+  --dashboard-accent: #7dd3fc;
+  --dashboard-accent-strong: #60a5fa;
+  --dashboard-on-accent: #041022;
+  --dashboard-focus: #bae6fd;
+  --dashboard-focus-ring: rgba(186, 230, 253, 0.28);
+  --dashboard-success: #86efac;
+  --dashboard-danger: #fda4af;
+  --dashboard-shadow-sm: 0 10px 28px rgba(1, 7, 18, 0.24);
+  --dashboard-shadow-md: 0 22px 56px rgba(1, 7, 18, 0.38);
+  --dashboard-blur: 16px;
+  --dashboard-motion: 180ms ease;
 }
 
 * { box-sizing: border-box; }
@@ -35,5 +56,5 @@ a { color: inherit; }
 #root { min-height: 100dvh; }
 
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { scroll-behavior: auto !important; animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; }
+  *, *::before, *::after { scroll-behavior: auto !important; animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
 }

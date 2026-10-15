@@ -1,7 +1,13 @@
 const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
 const test = require('node:test');
-const { createDefaultServices, createRequestLogger, resolveCorsOrigin } = require('../../src/createApp');
+const {
+  createApp,
+  createDefaultServices,
+  createRequestLogger,
+  resolveCorsOrigin,
+  SWAGGER_UI_OPTIONS,
+} = require('../../src/createApp');
 
 async function invokeRoute(app, path, method, { headers = {}, body = {}, params = {} } = {}) {
   const routeLayer = app._router.stack.find((candidate) => candidate.route?.path === path && candidate.route.methods[method]);
@@ -12,6 +18,7 @@ async function invokeRoute(app, path, method, { headers = {}, body = {}, params 
     status(code) { this.statusCode = code; return this; },
     json(value) { this.body = value; return this; },
     send(value) { this.body = value; return this; },
+    redirect(code, location) { this.statusCode = code; this.headers.Location = location; return this; },
     setHeader(name, value) { this.headers[name] = value; },
   };
   const run = async (index) => {
@@ -60,6 +67,59 @@ test('request logging records only the path and never query values', () => {
   res.emit('finish');
   assert.match(messages[0], /^GET \/api\/accounts -> 200/);
   assert.doesNotMatch(messages[0], /secret-value|token=/);
+});
+
+test('Swagger UI is public, canonical, and loads the active raw contract with cookie credentials', async () => {
+  const app = createApp({ prisma: {}, logger: { info: () => {}, error: () => {} } });
+  const stack = app._router.stack;
+  const contractIndex = stack.findIndex((layer) => layer.route?.path === '/docs/openapi.json');
+  const redirectLayer = stack.find((layer) => layer.route && layer.match('/docs') && !layer.match('/docs/'));
+  const docsMiddlewareIndex = stack.findIndex((layer) => !layer.route && String(layer.regexp).includes('docs'));
+  const docsMiddleware = stack.filter((layer) => !layer.route && String(layer.regexp).includes('docs'));
+  assert(contractIndex >= 0);
+  assert(redirectLayer, 'slashless /docs must have an exact redirect route');
+  assert(docsMiddlewareIndex > contractIndex, 'raw OpenAPI JSON must be registered before Swagger middleware');
+  assert.equal(stack[contractIndex].route.stack.length, 1, 'raw documentation route must be public');
+  assert.equal(redirectLayer.route.stack.length, 1, 'UI redirect must be public');
+  assert.equal(redirectLayer.match('/docs'), true);
+  assert.equal(redirectLayer.match('/docs/'), false, 'canonical /docs/ must not redirect to itself');
+  assert(docsMiddleware.every((layer) => layer.match('/docs/')), 'canonical /docs/ must reach Swagger middleware');
+  assert.equal(docsMiddleware.length, 3);
+  assert.deepEqual(SWAGGER_UI_OPTIONS.swaggerOptions, {
+    url: '/docs/openapi.json',
+    withCredentials: true,
+    persistAuthorization: false,
+  });
+
+  const contract = await invokeRoute(app, '/docs/openapi.json', 'get');
+  assert.equal(contract.res.body.openapi, '3.0.3');
+  const redirectResponse = {
+    statusCode: 200,
+    headers: {},
+    redirect(code, location) { this.statusCode = code; this.headers.Location = location; return this; },
+  };
+  await redirectLayer.route.stack[0].handle({}, redirectResponse);
+  assert.equal(redirectResponse.statusCode, 308);
+  assert.equal(redirectResponse.headers.Location, '/docs/');
+
+  const uiResponse = {
+    body: null,
+    send(value) { this.body = value; return this; },
+  };
+  docsMiddleware.at(-1).handle({}, uiResponse, () => {});
+  assert.match(uiResponse.body, /<div id="swagger-ui"><\/div>/);
+
+  const initResponse = {
+    body: null,
+    headers: {},
+    set(name, value) { this.headers[name] = value; return this; },
+    send(value) { this.body = value; return this; },
+  };
+  docsMiddleware[0].handle({ url: '/swagger-ui-init.js' }, initResponse, () => {});
+  assert.match(initResponse.body, /"url"\s*:\s*"\/docs\/openapi\.json"/);
+  assert.match(initResponse.body, /"withCredentials"\s*:\s*true/);
+  assert.match(initResponse.body, /"persistAuthorization"\s*:\s*false/);
+  assert.doesNotMatch(JSON.stringify(SWAGGER_UI_OPTIONS.swaggerOptions), /eb_session|password|bearer|authorization\s*:/i);
 });
 
 test('default services use the Prisma client injected into createApp wiring', async () => {
@@ -223,4 +283,34 @@ test('protected mutations authenticate before trusted-origin checks while public
   });
   assert.equal(publicAllowed.res.statusCode, 201);
   assert.equal(publicHandlerCalls, 1);
+});
+
+test('profile, schedule and card routes use verified actor identity and preserve mutation-origin ordering', async () => {
+  const calls = [];
+  const { createApp } = require('../../src/createApp');
+  const app = createApp({
+    prisma: { customer: {}, account: {}, transfer: {}, authSession: {}, scheduledTransfer: {}, card: {} },
+    services: {
+      resolveSession: async () => ({ session: { id: 'session-1' }, customer: { id: 'verified-customer' } }),
+      updateProfile: async (customerId) => { calls.push(['profile', customerId]); return { id: customerId }; },
+      createScheduledTransfer: async (customerId) => { calls.push(['schedule', customerId]); return { id: 'schedule-1' }; },
+      listScheduledTransfers: async (customerId) => { calls.push(['schedules', customerId]); return []; },
+      createCard: async (customerId) => { calls.push(['create-card', customerId]); return { id: 'card-1' }; },
+      listCards: async (customerId) => { calls.push(['cards', customerId]); return []; },
+      getCard: async (customerId) => { calls.push(['card', customerId]); return { id: 'card-1' }; },
+      lockCard: async (customerId) => { calls.push(['lock', customerId]); return { id: 'card-1' }; },
+    },
+    logger: { info: () => {}, error: () => {} },
+  });
+  const headers = { cookie: `eb_session=${'A'.repeat(43)}`, origin: 'http://localhost:5173' };
+  await invokeRoute(app, '/api/profile', 'put', { headers, body: { customerId: 'spoofed' } });
+  await invokeRoute(app, '/api/scheduled-transfers', 'post', { headers, body: { customerId: 'spoofed' } });
+  await invokeRoute(app, '/api/cards', 'post', { headers, body: { customerId: 'spoofed' } });
+  await invokeRoute(app, '/api/cards/:cardId/lock', 'post', { headers, params: { cardId: 'card-1' } });
+  assert.deepEqual(calls, [['profile', 'verified-customer'], ['schedule', 'verified-customer'], ['create-card', 'verified-customer'], ['lock', 'verified-customer']]);
+
+  const unauthenticated = await invokeRoute(app, '/api/profile', 'put', { headers: { origin: 'http://localhost:5173' } });
+  assert.equal(unauthenticated.res.statusCode, 401);
+  const untrusted = await invokeRoute(app, '/api/cards', 'post', { headers: { cookie: `eb_session=${'A'.repeat(43)}` } });
+  assert.equal(untrusted.res.statusCode, 403);
 });

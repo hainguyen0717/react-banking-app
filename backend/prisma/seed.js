@@ -45,6 +45,7 @@ const buildSeedPayload = async () => {
     passwordHash,
     firstName: process.env.SEED_CUSTOMER_FIRST_NAME.trim(),
     lastName: process.env.SEED_CUSTOMER_LAST_NAME.trim(),
+    address: process.env.SEED_CUSTOMER_ADDRESS?.trim() || null,
     phoneNumber: process.env.SEED_CUSTOMER_PHONE ?? null,
     dateOfBirth: parseOptionalDate(process.env.SEED_CUSTOMER_DATE_OF_BIRTH ?? null),
     isActive: process.env.SEED_CUSTOMER_IS_ACTIVE
@@ -62,6 +63,7 @@ const main = async () => {
     update: {
       firstName: payload.firstName,
       lastName: payload.lastName,
+      address: payload.address,
       phoneNumber: payload.phoneNumber,
       dateOfBirth: payload.dateOfBirth,
       isActive: payload.isActive,

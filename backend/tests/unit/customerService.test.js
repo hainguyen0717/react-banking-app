@@ -1,6 +1,6 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
-const { createCustomerService, validateRegistration } = require('../../src/services/customerService');
+const { createCustomerService, validateRegistration, validateProfileUpdate } = require('../../src/services/customerService');
 
 test('createCustomer normalizes fields, hashes the password and returns a safe projection', async () => {
   let createArgs;
@@ -50,4 +50,18 @@ test('registration validation rejects invalid email, password and names', () => 
   assert.throws(() => validateRegistration({ email: 'bad', password: 'safe-pass', firstName: 'A', lastName: 'B' }), /valid email/i);
   assert.throws(() => validateRegistration({ email: 'a@b.com', password: 'short', firstName: 'A', lastName: 'B' }), /at least 8/i);
   assert.throws(() => validateRegistration({ email: 'a@b.com', password: 'safe-pass', firstName: '', lastName: 'B' }), /First name/i);
+});
+
+test('profile update trims required personal fields and returns only the safe projection', async () => {
+  let updateArgs;
+  const service = createCustomerService({
+    prisma: { customer: { update: async (args) => { updateArgs = args; return { id: 'customer-1', email: 'ada@example.com', ...args.data }; } } },
+  });
+  const updated = await service.updateProfile('customer-1', { firstName: ' Ada ', lastName: ' Lovelace ', address: ' 123 Test Street ' });
+  assert.equal(updated.address, '123 Test Street');
+  assert.deepEqual(updateArgs.where, { id: 'customer-1' });
+  assert.equal(updateArgs.select.passwordHash, undefined);
+  assert.deepEqual(validateProfileUpdate({ firstName: 'A', lastName: 'B', address: 'C' }), { firstName: 'A', lastName: 'B', address: 'C' });
+  assert.throws(() => validateProfileUpdate({ firstName: '', lastName: 'B', address: 'C' }), /First name/);
+  assert.throws(() => validateProfileUpdate({ firstName: 'A', lastName: 'B', address: ' ' }), /Address/);
 });

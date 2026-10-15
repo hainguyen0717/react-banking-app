@@ -73,15 +73,21 @@ describe('Dashboard navigation', () => {
     expect(screen.getByRole('navigation', { name: 'Dashboard functions' })).toBe(screen.getByTestId('dashboard-function-nav'));
 
     const accountsGroup = screen.getByTestId('dashboard-nav-group-accounts');
+    const cardsDestination = screen.getByTestId('dashboard-nav-cards-standalone');
     const transferGroup = screen.getByTestId('dashboard-nav-group-transfer');
     expect(within(accountsGroup).getByRole('heading', { name: 'Accounts' })).toBe(screen.getByTestId('dashboard-nav-group-accounts-label'));
     expect(within(accountsGroup).getByRole('list')).toBeInTheDocument();
     expect(within(transferGroup).getByRole('heading', { name: 'Transfer' })).toBe(screen.getByTestId('dashboard-nav-group-transfer-label'));
     expect(within(transferGroup).getByRole('list')).toBeInTheDocument();
+    expect(within(accountsGroup).queryByTestId('dashboard-nav-cards')).not.toBeInTheDocument();
+    expect(within(cardsDestination).getByTestId('dashboard-nav-cards-item')).toContainElement(screen.getByTestId('dashboard-nav-cards'));
+    expect(accountsGroup.compareDocumentPosition(cardsDestination) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(cardsDestination.compareDocumentPosition(transferGroup) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 
     expect(screen.getByTestId('dashboard-nav-accounts-overview')).toHaveAttribute('href', '/dashboard?view=accounts');
     expect(screen.getByTestId('dashboard-nav-new-account')).toHaveAttribute('href', '/dashboard?view=new-account');
     expect(screen.getByTestId('dashboard-nav-new-joint-account')).toHaveAttribute('href', '/dashboard?view=new-joint-account');
+    expect(screen.getByTestId('dashboard-nav-cards')).toHaveAttribute('href', '/dashboard?view=cards');
     expect(screen.getByTestId('dashboard-nav-transfer')).toHaveAttribute('href', '/dashboard?view=transfer');
     expect(screen.getByTestId('dashboard-nav-accounts-overview')).toHaveAttribute('aria-current', 'page');
     expect(screen.getByTestId('dashboard-nav-new-account')).not.toHaveAttribute('aria-current');
@@ -263,6 +269,68 @@ describe('Dashboard banking functions', () => {
 
     expect(screen.getByTestId('transfer-message')).toHaveTextContent('two decimal places');
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('updates personal information and immediately refreshes the dashboard profile name', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(response({ accounts }))
+      .mockResolvedValueOnce(response({ id: 'customer-1', email: 'ada@example.com', firstName: 'Grace', lastName: 'Hopper', address: '1 Navy Way' }));
+    renderDashboard('/dashboard?view=profile');
+    await screen.findByTestId('profile-form');
+    fireEvent.change(screen.getByTestId('profile-first-name'), { target: { value: 'Grace' } });
+    fireEvent.change(screen.getByTestId('profile-last-name'), { target: { value: 'Hopper' } });
+    fireEvent.change(screen.getByTestId('profile-address'), { target: { value: '1 Navy Way' } });
+    fireEvent.click(screen.getByTestId('profile-submit'));
+    expect(await screen.findByTestId('profile-message')).toHaveTextContent('updated');
+    expect(screen.getByTestId('dashboard-customer-name')).toHaveTextContent('Grace Hopper');
+    expect(JSON.parse((fetchMock.mock.calls[1][1] as RequestInit).body as string)).toEqual({ firstName: 'Grace', lastName: 'Hopper', address: '1 Navy Way' });
+  });
+
+  it('schedules a transfer with picker-produced ISO and no client customer identity', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(response({ accounts }))
+      .mockResolvedValueOnce(response({ id: 'schedule-1', status: 'PENDING' }, 201));
+    renderDashboard('/dashboard?view=schedule-transfer');
+    await screen.findByTestId('schedule-transfer-form');
+    fireEvent.change(screen.getByTestId('schedule-transfer-destination-account'), { target: { value: 'EXB-000000002' } });
+    fireEvent.change(screen.getByTestId('schedule-transfer-amount'), { target: { value: '25.00' } });
+    fireEvent.click(screen.getByTestId('scheduled-transfer-date-time-trigger'));
+    fireEvent.click(screen.getByTestId('date-time-picker-next-month'));
+    fireEvent.click(screen.getByTestId('date-time-picker-day-2026-11-01'));
+    fireEvent.click(screen.getByTestId('date-time-picker-confirm'));
+    fireEvent.click(screen.getByTestId('schedule-transfer-submit'));
+    expect(await screen.findByTestId('schedule-transfer-message')).toHaveTextContent('Transfer scheduled');
+    const body = JSON.parse((fetchMock.mock.calls[1][1] as RequestInit).body as string);
+    expect(body).toMatchObject({ sourceAccountId: 'account-1', destinationAccountNumber: 'EXB-000000002', amountCents: 2500 });
+    expect(body.scheduledFor).toMatch(/^2026-11-01T/);
+    expect(body).not.toHaveProperty('customerId');
+  });
+
+  it('renders masked cards and five ID-located sample transactions with explicit disable confirmation', async () => {
+    const card = { id: 'card-1', accountId: 'account-1', maskedNumber: '•••• 1234', status: 'ACTIVE', account: { accountNumber: 'EXB-000000001', displayName: null, type: 'EVERYDAY' }, transactions: Array.from({ length: 5 }, (_, index) => ({ id: `card-transaction-${index + 1}`, merchant: `Merchant ${index + 1}`, amountCents: 100 + index, occurredAt: '2026-10-14T00:00:00Z' })) };
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith('/api/accounts')) return response({ accounts });
+      if (url.endsWith('/api/cards')) return response({ cards: [card] });
+      return response(card);
+    });
+    renderDashboard('/dashboard?view=cards');
+    expect(await screen.findByTestId('card-row-card-1')).toBeInTheDocument();
+    expect(screen.getByTestId('dashboard-nav-cards')).toHaveAttribute('aria-current', 'page');
+    expect(screen.getByTestId('card-masked-number-card-1')).toHaveTextContent('•••• 1234');
+    expect(screen.getAllByTestId(/^card-transaction-row-/)).toHaveLength(5);
+    fireEvent.click(screen.getByTestId('card-disable-card-1'));
+    expect(screen.getByRole('alertdialog', { name: /disable this card permanently/i })).toBeInTheDocument();
+    const cancel = screen.getByTestId('card-disable-cancel-card-1');
+    const confirm = screen.getByTestId('card-disable-confirm-card-1');
+    expect(cancel).toHaveFocus();
+    fireEvent.keyDown(cancel, { key: 'Tab', shiftKey: true });
+    expect(confirm).toHaveFocus();
+    fireEvent.keyDown(confirm, { key: 'Tab' });
+    expect(cancel).toHaveFocus();
+    fireEvent.keyDown(screen.getByTestId('card-disable-dialog-card-1'), { key: 'Escape' });
+    expect(screen.queryByTestId('card-disable-dialog-card-1')).not.toBeInTheDocument();
+    expect(screen.getByTestId('card-disable-card-1')).toHaveFocus();
   });
 
   it('clears the session on logout', async () => {
