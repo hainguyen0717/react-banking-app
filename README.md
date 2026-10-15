@@ -1,6 +1,6 @@
 # React Banking App
 
-This repository is a React, CommonJS Express, Prisma, and SQLite banking demo built for deterministic test-tool scenarios. It supports customer registration and login, editable personal information, three AUD account types with personal or joint ownership, immediate and scheduled transfers, directional transaction history, and holder-owned demo debit cards.
+This repository is a React, CommonJS Express, Prisma, and SQLite banking demo built for deterministic test-tool scenarios. It supports customer registration and login, editable personal information, three AUD account types with personal or joint ownership, immediate and scheduled transfers, immediate bank-account, email PayID and BPAY payments, directional transaction history, and holder-owned demo debit cards.
 
 ## Running the application
 
@@ -31,12 +31,13 @@ Open [http://localhost:5173](http://localhost:5173). The frontend uses `http://l
 
 Create a customer from the login page or use the configured seeded customer. After login, the dashboard can create `EVERYDAY`, `SAVINGS`, and `BUSINESS` accounts. Ownership is either personal or joint; joint is not a fourth product type. Each new account receives the server-controlled `DEFAULT_ACCOUNT_BALANCE_CENTS` opening balance, which defaults to `100000000` cents (`$1,000,000.00` AUD) for test purposes. A joint account receives that balance once and is shown in full to each of its two owners.
 
-The dashboard uses deep-linkable function navigation. Cards is a standalone primary destination after the Accounts group and before the Transfer group:
+The dashboard uses deep-linkable function navigation. Cards and Payments are standalone primary destinations after the Accounts group and before the Transfer group:
 
 - `/dashboard?view=accounts` — account overview and transaction history.
 - `/dashboard?view=new-account` — new account form.
 - `/dashboard?view=new-joint-account` — joint account form for a second registered active customer.
 - `/dashboard?view=cards` — open, temporarily lock, unlock, and permanently disable demo cards.
+- `/dashboard?view=payments` — resolve, review, confirm, and receipt for an immediate account, email PayID, or BPAY payment.
 - `/dashboard?view=transfer` — transfer form.
 - `/dashboard?view=schedule-transfer` — one-time future transfer form with a picker-only local date and time.
 - `/dashboard?view=scheduled-transfers` — customer-private schedule statuses.
@@ -52,6 +53,7 @@ Missing or invalid `view` values show the accounts overview. A transfer can targ
 - `GET|POST /api/accounts` list and create accounts for the authenticated customer.
 - `POST /api/joint-accounts` creates one shared account for the authenticated customer and a registered co-owner resolved by email.
 - `POST /api/transfers` performs atomic, no-overdraft transfers between Express Bank accounts by destination account number.
+- `POST /api/payments/resolve` safely resolves payment details without writes; `POST /api/payments` revalidates and confirms the payment atomically.
 - `GET|POST /api/scheduled-transfers` lists and creates one-time future transfers. Funds are not reserved; the worker rechecks rules when due.
 - `GET|POST /api/cards`, `GET /api/cards/:cardId`, and card action endpoints manage masked holder-owned demo cards. Each newly opened card has exactly five display-only sample transactions.
 - `GET /api/accounts/:accountId/transactions` returns newest-first `SENT`/`RECEIVED` history.

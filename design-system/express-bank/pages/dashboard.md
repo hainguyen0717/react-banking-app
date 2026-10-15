@@ -5,9 +5,10 @@ These rules refine the [Express Bank master design system](../MASTER.md) for the
 ## Navigation hierarchy
 
 - Accounts is a grouped destination containing Accounts overview, New account, and New joint account.
-- Cards is a standalone primary destination immediately after Accounts and before the Transfer group. It is never nested under Accounts.
+- Cards is a standalone primary destination immediately after Accounts. Payments is a second standalone primary destination after Cards and before the Transfer group. Neither is nested under Accounts or Transfer.
 - Transfer contains Transfer, Schedule transfer, and Scheduled transfers. Profile remains its own group.
 - Preserve query-backed deep links, active `aria-current` state, and DOM order at every breakpoint.
+- Payments uses entry, explicit review, and receipt stages. Method changes reveal only the relevant account, email PayID, or BPAY fields; field edits invalidate prior resolution. Confirmation has visible loading state and remains disabled against duplicate submission.
 
 ## Glass hierarchy
 

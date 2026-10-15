@@ -27,11 +27,35 @@ interface Account {
 
 interface Transaction {
   id: string;
+  method: 'TRANSFER' | 'BANK_ACCOUNT' | 'PAYID' | 'BPAY';
   direction: 'SENT' | 'RECEIVED';
   amountCents: number;
   description: string | null;
-  counterpartyAccountNumber: string;
+  counterpartyAccountNumber: string | null;
+  counterpartyLabel: string;
+  customerReference: string | null;
   createdAt: string;
+}
+
+type PaymentMethod = 'BANK_ACCOUNT' | 'PAYID' | 'BPAY';
+interface PaymentReview {
+  method: PaymentMethod;
+  sourceAccountNumber: string;
+  amountCents: number;
+  description: string | null;
+  payeeName: string;
+  destinationAccountNumber?: string;
+  payId?: string;
+  billerCode?: string;
+  customerReference?: string;
+}
+interface PaymentReceipt extends Omit<PaymentReview, 'destinationAccountNumber' | 'payId' | 'billerCode' | 'customerReference'> {
+  id: string;
+  createdAt: string;
+  destinationAccountNumber: string | null;
+  payId: string | null;
+  billerCode: string | null;
+  customerReference: string | null;
 }
 
 interface ScheduledTransfer {
@@ -63,7 +87,7 @@ interface Card {
 }
 
 type HistoryState = Record<string, { status: 'loading' | 'ready' | 'error'; transactions: Transaction[]; error?: string }>;
-type DashboardView = 'accounts' | 'new-account' | 'new-joint-account' | 'transfer' | 'profile' | 'schedule-transfer' | 'scheduled-transfers' | 'cards';
+type DashboardView = 'accounts' | 'new-account' | 'new-joint-account' | 'payments' | 'transfer' | 'profile' | 'schedule-transfer' | 'scheduled-transfers' | 'cards';
 type FormMessage = { kind: 'success' | 'error'; text: string };
 
 function labelAccountType(type: AccountType) {
@@ -114,6 +138,20 @@ export function Dashboard() {
   const [cardMessage, setCardMessage] = useState<FormMessage | null>(null);
   const [cardInFlight, setCardInFlight] = useState<string | null>(null);
   const [disableCardId, setDisableCardId] = useState<string | null>(null);
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('BANK_ACCOUNT');
+  const [paymentSourceAccountId, setPaymentSourceAccountId] = useState('');
+  const [paymentDestinationAccount, setPaymentDestinationAccount] = useState('');
+  const [paymentPayId, setPaymentPayId] = useState('');
+  const [paymentBillerCode, setPaymentBillerCode] = useState('');
+  const [paymentCustomerReference, setPaymentCustomerReference] = useState('');
+  const [paymentAmount, setPaymentAmount] = useState('');
+  const [paymentDescription, setPaymentDescription] = useState('');
+  const [paymentReview, setPaymentReview] = useState<PaymentReview | null>(null);
+  const [paymentReceipt, setPaymentReceipt] = useState<PaymentReceipt | null>(null);
+  const [paymentMessage, setPaymentMessage] = useState<FormMessage | null>(null);
+  const [paymentInFlight, setPaymentInFlight] = useState<'resolve' | 'confirm' | null>(null);
+  const paymentReviewHeadingRef = useRef<HTMLHeadingElement>(null);
+  const paymentReceiptHeadingRef = useRef<HTMLHeadingElement>(null);
   const disableDialogRef = useRef<HTMLElement>(null);
   const disableCancelRef = useRef<HTMLButtonElement>(null);
   const disableTriggerRefs = useRef(new Map<string, HTMLButtonElement>());
@@ -126,6 +164,7 @@ export function Dashboard() {
       const response = await apiRequest<{ accounts: Account[] }>('/api/accounts');
       setAccounts(response.accounts);
       setSourceAccountId((current) => current || response.accounts[0]?.id || '');
+      setPaymentSourceAccountId((current) => current || response.accounts[0]?.id || '');
       setNewCardAccountId((current) => current || response.accounts[0]?.id || '');
       setAccountsStatus('ready');
     } catch (error) {
@@ -204,6 +243,11 @@ export function Dashboard() {
       disableTriggerRefs.current.get(triggerId)?.focus();
     }
   }, [disableCardId]);
+
+  useEffect(() => {
+    if (paymentReview) paymentReviewHeadingRef.current?.focus();
+    if (paymentReceipt) paymentReceiptHeadingRef.current?.focus();
+  }, [paymentReview, paymentReceipt]);
 
   if (!customer) return null;
 
@@ -356,6 +400,75 @@ export function Dashboard() {
     } finally { setCardInFlight(null); }
   }
 
+  function invalidatePaymentReview() {
+    setPaymentReview(null);
+    setPaymentMessage(null);
+  }
+
+  function paymentPayload() {
+    const amountCents = parseAudToCents(paymentAmount);
+    if (amountCents === null) return null;
+    return {
+      method: paymentMethod,
+      sourceAccountId: paymentSourceAccountId,
+      amountCents,
+      description: paymentDescription || undefined,
+      ...(paymentMethod === 'BANK_ACCOUNT' ? { destinationAccountNumber: paymentDestinationAccount } : {}),
+      ...(paymentMethod === 'PAYID' ? { payId: paymentPayId } : {}),
+      ...(paymentMethod === 'BPAY' ? { billerCode: paymentBillerCode, customerReference: paymentCustomerReference } : {}),
+    };
+  }
+
+  async function handlePaymentResolve(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setPaymentMessage(null);
+    const payload = paymentPayload();
+    if (!payload) {
+      setPaymentMessage({ kind: 'error', text: 'Enter a positive amount with no more than two decimal places.' });
+      return;
+    }
+    setPaymentInFlight('resolve');
+    try {
+      setPaymentReview(await apiRequest<PaymentReview>('/api/payments/resolve', { method: 'POST', body: JSON.stringify(payload) }));
+    } catch (error) {
+      setPaymentMessage({ kind: 'error', text: error instanceof Error ? error.message : 'Payment details could not be resolved.' });
+    } finally {
+      setPaymentInFlight(null);
+    }
+  }
+
+  async function handlePaymentConfirm() {
+    const payload = paymentPayload();
+    if (!payload || !paymentReview) return;
+    setPaymentMessage(null);
+    setPaymentInFlight('confirm');
+    try {
+      const receipt = await apiRequest<PaymentReceipt>('/api/payments', { method: 'POST', body: JSON.stringify(payload) });
+      setPaymentReceipt(receipt);
+      setPaymentReview(null);
+      setPaymentMessage({ kind: 'success', text: 'Payment complete. Your receipt is ready.' });
+      setExpandedAccountId(paymentSourceAccountId);
+      await loadAccounts();
+      await loadTransactions(paymentSourceAccountId);
+    } catch (error) {
+      setPaymentMessage({ kind: 'error', text: error instanceof Error ? error.message : 'Payment could not be completed.' });
+    } finally {
+      setPaymentInFlight(null);
+    }
+  }
+
+  function startAnotherPayment() {
+    setPaymentReceipt(null);
+    setPaymentReview(null);
+    setPaymentMessage(null);
+    setPaymentDestinationAccount('');
+    setPaymentPayId('');
+    setPaymentBillerCode('');
+    setPaymentCustomerReference('');
+    setPaymentAmount('');
+    setPaymentDescription('');
+  }
+
   function closeDisableDialog() {
     setDisableCardId(null);
   }
@@ -406,7 +519,7 @@ export function Dashboard() {
 
   const totalBalance = accounts.reduce((total, account) => total + account.balanceCents, 0);
   const requestedView = searchParams.get('view');
-  const validViews: DashboardView[] = ['accounts', 'new-account', 'new-joint-account', 'transfer', 'profile', 'schedule-transfer', 'scheduled-transfers', 'cards'];
+  const validViews: DashboardView[] = ['accounts', 'new-account', 'new-joint-account', 'payments', 'transfer', 'profile', 'schedule-transfer', 'scheduled-transfers', 'cards'];
   const activeView: DashboardView = validViews.includes(requestedView as DashboardView)
     ? requestedView as DashboardView
     : 'accounts';
@@ -458,6 +571,13 @@ export function Dashboard() {
                 <ul className={styles.navList} data-testid="dashboard-nav-cards-list">
                   <li data-testid="dashboard-nav-cards-item">
                     <Link className={styles.navLink} to="/dashboard?view=cards" aria-current={activeView === 'cards' ? 'page' : undefined} data-testid="dashboard-nav-cards">Cards</Link>
+                  </li>
+                </ul>
+              </section>
+              <section className={styles.standaloneNav} aria-label="Payments" data-testid="dashboard-nav-payments-standalone">
+                <ul className={styles.navList} data-testid="dashboard-nav-payments-list">
+                  <li data-testid="dashboard-nav-payments-item">
+                    <Link className={styles.navLink} to="/dashboard?view=payments" aria-current={activeView === 'payments' ? 'page' : undefined} data-testid="dashboard-nav-payments">Payments</Link>
                   </li>
                 </ul>
               </section>
@@ -544,9 +664,10 @@ export function Dashboard() {
                             {accountHistory?.transactions.map((transaction) => (
                               <div className={styles.transactionRow} key={transaction.id} data-testid={`transaction-row-${transaction.id}`}>
                                 <div className={styles.transactionCopy} data-testid={`transaction-copy-${transaction.id}`}>
-                                  <strong className={styles.transactionDirection} data-testid={`transaction-direction-${transaction.id}`}>{transaction.direction === 'SENT' ? 'Sent' : 'Received'}</strong>
-                                  <span className={styles.counterparty} data-testid={`transaction-counterparty-${transaction.id}`}>{transaction.counterpartyAccountNumber}</span>
+                                  <strong className={styles.transactionDirection} data-testid={`transaction-direction-${transaction.id}`}>{transaction.direction === 'SENT' ? 'Sent' : 'Received'} · {transaction.method ?? 'TRANSFER'}</strong>
+                                  <span className={styles.counterparty} data-testid={`transaction-counterparty-${transaction.id}`}>{transaction.counterpartyLabel ?? transaction.counterpartyAccountNumber}</span>
                                   {transaction.description ? <span className={styles.description} data-testid={`transaction-description-${transaction.id}`}>{transaction.description}</span> : null}
+                                  {transaction.customerReference ? <span className={styles.description} data-testid={`transaction-reference-${transaction.id}`}>Reference {transaction.customerReference}</span> : null}
                                 </div>
                                 <span className={transaction.direction === 'SENT' ? styles.sentAmount : styles.receivedAmount} data-testid={`transaction-amount-${transaction.id}`}>{transaction.direction === 'SENT' ? '−' : '+'}{formatAud(transaction.amountCents)}</span>
                               </div>
@@ -611,6 +732,96 @@ export function Dashboard() {
                     <button className={styles.primaryButton} type="submit" disabled={isCreatingJointAccount} data-testid="joint-account-create-submit">{isCreatingJointAccount ? 'Opening joint account…' : 'Open joint account'}</button>
                   </form>
                 </section>
+              </section>
+            ) : null}
+
+            {activeView === 'payments' ? (
+              <section className={styles.viewPanel} aria-labelledby="payments-heading" data-testid="dashboard-view-payments">
+                <h2 className={styles.sectionTitle} id="payments-heading" data-testid="payments-heading">Payments</h2>
+                <p className={styles.actionCopy} data-testid="payments-copy">Make an immediate AUD payment by Express Bank account number, email PayID or BPAY.</p>
+                {paymentMessage ? <p className={paymentMessage.kind === 'error' ? styles.error : styles.formMessage} role={paymentMessage.kind === 'error' ? 'alert' : 'status'} data-testid="payment-message">{paymentMessage.text}</p> : null}
+
+                {!paymentReview && !paymentReceipt ? (
+                  <form className={`${styles.actionCard} ${styles.form}`} onSubmit={handlePaymentResolve} aria-busy={paymentInFlight === 'resolve'} data-testid="payment-entry-form">
+                    <fieldset className={styles.methodSelector} data-testid="payment-method-group">
+                      <legend className={styles.label} data-testid="payment-method-legend">Payment method</legend>
+                      {(['BANK_ACCOUNT', 'PAYID', 'BPAY'] as PaymentMethod[]).map((method) => (
+                        <label className={paymentMethod === method ? styles.methodSelected : styles.methodOption} key={method} data-testid={`payment-method-${method === 'BANK_ACCOUNT' ? 'bank-account' : method.toLowerCase()}-label`}>
+                          <input type="radio" name="payment-method" value={method} checked={paymentMethod === method} onChange={() => { setPaymentMethod(method); invalidatePaymentReview(); }} data-testid={`payment-method-${method === 'BANK_ACCOUNT' ? 'bank-account' : method.toLowerCase()}`} />
+                          <span data-testid={`payment-method-${method === 'BANK_ACCOUNT' ? 'bank-account' : method.toLowerCase()}-text`}>{method === 'BANK_ACCOUNT' ? 'Bank account' : method === 'PAYID' ? 'Email PayID' : 'BPAY'}</span>
+                        </label>
+                      ))}
+                    </fieldset>
+                    <label className={styles.label} htmlFor="payment-source-account" data-testid="payment-source-label">From
+                      <select className={styles.input} id="payment-source-account" value={paymentSourceAccountId} onChange={(event) => { setPaymentSourceAccountId(event.target.value); invalidatePaymentReview(); }} required disabled={accounts.length === 0} data-testid="payment-source-account">
+                        {accounts.length === 0 ? <option value="" data-testid="payment-source-empty-option">Create an account first</option> : null}
+                        {accounts.map((account) => <option key={account.id} value={account.id} data-testid={`payment-source-option-${account.id}`}>{account.displayName || labelAccountType(account.type)} · {account.accountNumber}{account.ownershipType === 'JOINT' ? ' · Joint' : ''}</option>)}
+                      </select>
+                    </label>
+                    {paymentMethod === 'BANK_ACCOUNT' ? <label className={styles.label} htmlFor="payment-destination-account" data-testid="payment-destination-label">Destination account number
+                      <input className={styles.input} id="payment-destination-account" value={paymentDestinationAccount} onChange={(event) => { setPaymentDestinationAccount(event.target.value); invalidatePaymentReview(); }} placeholder="EXB-123456789" required data-testid="payment-destination-account" />
+                    </label> : null}
+                    {paymentMethod === 'PAYID' ? <label className={styles.label} htmlFor="payment-payid" data-testid="payment-payid-label">Email PayID
+                      <input className={styles.input} id="payment-payid" type="email" value={paymentPayId} onChange={(event) => { setPaymentPayId(event.target.value); invalidatePaymentReview(); }} placeholder="recipient@example.com" required data-testid="payment-payid" />
+                    </label> : null}
+                    {paymentMethod === 'BPAY' ? <>
+                      <label className={styles.label} htmlFor="payment-biller-code" data-testid="payment-biller-code-label">Biller code
+                        <input className={styles.input} id="payment-biller-code" inputMode="numeric" pattern="[0-9]+" value={paymentBillerCode} onChange={(event) => { setPaymentBillerCode(event.target.value); invalidatePaymentReview(); }} required data-testid="payment-biller-code" />
+                      </label>
+                      <label className={styles.label} htmlFor="payment-customer-reference" data-testid="payment-customer-reference-label">Customer reference
+                        <input className={styles.input} id="payment-customer-reference" inputMode="numeric" pattern="[0-9]+" value={paymentCustomerReference} onChange={(event) => { setPaymentCustomerReference(event.target.value); invalidatePaymentReview(); }} required data-testid="payment-customer-reference" />
+                      </label>
+                    </> : null}
+                    <label className={styles.label} htmlFor="payment-amount" data-testid="payment-amount-label">Amount (AUD)
+                      <input className={styles.input} id="payment-amount" inputMode="decimal" value={paymentAmount} onChange={(event) => { setPaymentAmount(event.target.value); invalidatePaymentReview(); }} placeholder="250.00" required data-testid="payment-amount" />
+                    </label>
+                    <label className={styles.label} htmlFor="payment-description" data-testid="payment-description-label">Description <span className={styles.optional} data-testid="payment-description-optional">Optional</span>
+                      <input className={styles.input} id="payment-description" maxLength={140} value={paymentDescription} onChange={(event) => { setPaymentDescription(event.target.value); invalidatePaymentReview(); }} data-testid="payment-description" />
+                    </label>
+                    <button className={styles.primaryButton} type="submit" disabled={paymentInFlight !== null || accounts.length === 0} data-testid="payment-review-submit">{paymentInFlight === 'resolve' ? 'Checking details…' : 'Review payment'}</button>
+                  </form>
+                ) : null}
+
+                {paymentReview ? (
+                  <section className={styles.reviewCard} aria-labelledby="payment-review-heading" aria-busy={paymentInFlight === 'confirm'} data-testid="payment-review">
+                    <p className={styles.eyebrow} data-testid="payment-review-eyebrow">Check before confirming</p>
+                    <h3 ref={paymentReviewHeadingRef} className={styles.actionTitle} id="payment-review-heading" tabIndex={-1} data-testid="payment-review-heading">Review payment</h3>
+                    <dl className={styles.reviewList} data-testid="payment-review-details">
+                      <div data-testid="payment-review-method-row"><dt data-testid="payment-review-method-label">Method</dt><dd data-testid="payment-review-method">{paymentReview.method === 'BANK_ACCOUNT' ? 'Bank account' : paymentReview.method === 'PAYID' ? 'Email PayID' : 'BPAY'}</dd></div>
+                      <div data-testid="payment-review-source-row"><dt data-testid="payment-review-source-label">From</dt><dd data-testid="payment-review-source">{paymentReview.sourceAccountNumber}</dd></div>
+                      <div data-testid="payment-review-payee-row"><dt data-testid="payment-review-payee-label">Payee</dt><dd data-testid="payment-review-payee">{paymentReview.payeeName}</dd></div>
+                      <div data-testid="payment-review-amount-row"><dt data-testid="payment-review-amount-label">Amount</dt><dd data-testid="payment-review-amount">{formatAud(paymentReview.amountCents)}</dd></div>
+                      {paymentReview.destinationAccountNumber ? <div data-testid="payment-review-destination-row"><dt data-testid="payment-review-destination-label">Account</dt><dd data-testid="payment-review-destination">{paymentReview.destinationAccountNumber}</dd></div> : null}
+                      {paymentReview.payId ? <div data-testid="payment-review-payid-row"><dt data-testid="payment-review-payid-label">PayID</dt><dd data-testid="payment-review-payid">{paymentReview.payId}</dd></div> : null}
+                      {paymentReview.billerCode ? <div data-testid="payment-review-bpay-row"><dt data-testid="payment-review-bpay-label">BPAY</dt><dd data-testid="payment-review-bpay">Biller {paymentReview.billerCode} · Reference {paymentReview.customerReference}</dd></div> : null}
+                      {paymentReview.description ? <div data-testid="payment-review-description-row"><dt data-testid="payment-review-description-label">Description</dt><dd data-testid="payment-review-description">{paymentReview.description}</dd></div> : null}
+                    </dl>
+                    <p className={styles.fieldHelp} data-testid="payment-review-warning">Confirming sends this payment immediately and it cannot be cancelled in this demo.</p>
+                    <div className={styles.reviewActions} data-testid="payment-review-actions">
+                      <button type="button" onClick={() => { setPaymentReview(null); setPaymentMessage(null); }} disabled={paymentInFlight !== null} data-testid="payment-review-edit">Edit details</button>
+                      <button className={styles.primaryButton} type="button" onClick={() => void handlePaymentConfirm()} disabled={paymentInFlight !== null} data-testid="payment-confirm">{paymentInFlight === 'confirm' ? 'Sending payment…' : 'Confirm payment'}</button>
+                    </div>
+                  </section>
+                ) : null}
+
+                {paymentReceipt ? (
+                  <section className={styles.receiptCard} aria-labelledby="payment-receipt-heading" data-testid="payment-receipt">
+                    <div data-testid={`payment-receipt-${paymentReceipt.id}`}>
+                      <p className={styles.eyebrow} data-testid="payment-receipt-status">Payment complete</p>
+                      <h3 ref={paymentReceiptHeadingRef} className={styles.actionTitle} id="payment-receipt-heading" tabIndex={-1} data-testid="payment-receipt-heading">Receipt</h3>
+                      <dl className={styles.reviewList} data-testid="payment-receipt-details">
+                        <div data-testid="payment-receipt-id-row"><dt data-testid="payment-receipt-id-label">Payment ID</dt><dd data-testid="payment-receipt-id">{paymentReceipt.id}</dd></div>
+                        <div data-testid="payment-receipt-method-row"><dt data-testid="payment-receipt-method-label">Method</dt><dd data-testid="payment-receipt-method">{paymentReceipt.method}</dd></div>
+                        <div data-testid="payment-receipt-payee-row"><dt data-testid="payment-receipt-payee-label">Payee</dt><dd data-testid="payment-receipt-payee">{paymentReceipt.payeeName}</dd></div>
+                        <div data-testid="payment-receipt-amount-row"><dt data-testid="payment-receipt-amount-label">Amount</dt><dd data-testid="payment-receipt-amount">{formatAud(paymentReceipt.amountCents)}</dd></div>
+                        <div data-testid="payment-receipt-time-row"><dt data-testid="payment-receipt-time-label">Date</dt><dd data-testid="payment-receipt-time">{new Date(paymentReceipt.createdAt).toLocaleString('en-AU')}</dd></div>
+                        {paymentReceipt.payId ? <div data-testid="payment-receipt-payid-row"><dt data-testid="payment-receipt-payid-label">PayID</dt><dd data-testid="payment-receipt-payid">{paymentReceipt.payId}</dd></div> : null}
+                        {paymentReceipt.billerCode ? <div data-testid="payment-receipt-bpay-row"><dt data-testid="payment-receipt-bpay-label">BPAY</dt><dd data-testid="payment-receipt-bpay">Biller {paymentReceipt.billerCode} · Reference {paymentReceipt.customerReference}</dd></div> : null}
+                      </dl>
+                    </div>
+                    <button className={styles.primaryButton} type="button" onClick={startAnotherPayment} data-testid="payment-new">Make another payment</button>
+                  </section>
+                ) : null}
               </section>
             ) : null}
 

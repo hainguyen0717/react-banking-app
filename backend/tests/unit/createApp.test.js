@@ -314,3 +314,29 @@ test('profile, schedule and card routes use verified actor identity and preserve
   const untrusted = await invokeRoute(app, '/api/cards', 'post', { headers: { cookie: `eb_session=${'A'.repeat(43)}` } });
   assert.equal(untrusted.res.statusCode, 403);
 });
+
+test('payment resolution and confirmation authenticate first, require trusted origin and ignore spoofed identity', async () => {
+  const calls = [];
+  const app = createApp({
+    prisma: { customer: {}, account: {}, transfer: {}, authSession: {}, payment: {}, payIdDirectoryEntry: {}, bpayBiller: {} },
+    services: {
+      resolveSession: async () => ({ session: { id: 'session-1' }, customer: { id: 'verified-customer' } }),
+      resolvePayment: async (customerId, input) => { calls.push(['resolve', customerId, input]); return { method: 'BPAY' }; },
+      createPayment: async (customerId, input) => { calls.push(['create', customerId, input]); return { id: 'payment-1' }; },
+    },
+    logger: { info: () => {}, error: () => {} },
+  });
+  const headers = { cookie: `eb_session=${'A'.repeat(43)}`, origin: 'http://localhost:5173' };
+  const resolve = await invokeRoute(app, '/api/payments/resolve', 'post', { headers, body: { customerId: 'spoofed', method: 'BPAY' } });
+  const create = await invokeRoute(app, '/api/payments', 'post', { headers, body: { customerId: 'spoofed', method: 'BPAY' } });
+  assert.equal(resolve.res.statusCode, 200);
+  assert.equal(create.res.statusCode, 201);
+  assert.deepEqual(calls.map(([name, actor]) => [name, actor]), [['resolve', 'verified-customer'], ['create', 'verified-customer']]);
+  assert.equal(app._router.stack.find((layer) => layer.route?.path === '/api/payments/resolve').route.stack.length, 3);
+  assert.equal(app._router.stack.find((layer) => layer.route?.path === '/api/payments').route.stack.length, 3);
+
+  const unauthenticated = await invokeRoute(app, '/api/payments', 'post', { headers: { origin: 'http://localhost:5173' } });
+  assert.equal(unauthenticated.res.statusCode, 401);
+  const untrusted = await invokeRoute(app, '/api/payments', 'post', { headers: { cookie: `eb_session=${'A'.repeat(43)}` } });
+  assert.equal(untrusted.res.statusCode, 403);
+});

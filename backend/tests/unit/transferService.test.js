@@ -101,8 +101,8 @@ test('listTransactions allows either joint owner and derives SENT/RECEIVED in qu
       findMany: async (args) => {
         assert.deepEqual(args.orderBy, [{ createdAt: 'desc' }, { id: 'desc' }]);
         return [
-          { id: 'new', sourceAccountId: 'account-1', amountCents: 200, description: null, createdAt: new Date(), sourceAccount: { accountNumber: 'EXB-1' }, destinationAccount: { accountNumber: 'EXB-2' } },
-          { id: 'old', sourceAccountId: 'account-2', amountCents: 100, description: 'Refund', createdAt: new Date(), sourceAccount: { accountNumber: 'EXB-2' }, destinationAccount: { accountNumber: 'EXB-1' } },
+          { id: 'new', sourceAccountId: 'account-1', amountCents: 200, description: null, createdAt: new Date('2026-10-16T00:00:01Z'), sourceAccount: { accountNumber: 'EXB-1' }, destinationAccount: { accountNumber: 'EXB-2' } },
+          { id: 'old', sourceAccountId: 'account-2', amountCents: 100, description: 'Refund', createdAt: new Date('2026-10-16T00:00:00Z'), sourceAccount: { accountNumber: 'EXB-2' }, destinationAccount: { accountNumber: 'EXB-1' } },
         ];
       },
     },
@@ -113,6 +113,24 @@ test('listTransactions allows either joint owner and derives SENT/RECEIVED in qu
   assert.deepEqual(transactions.map(({ id, direction, counterpartyAccountNumber }) => ({ id, direction, counterpartyAccountNumber })), [
     { id: 'new', direction: 'SENT', counterpartyAccountNumber: 'EXB-2' },
     { id: 'old', direction: 'RECEIVED', counterpartyAccountNumber: 'EXB-2' },
+  ]);
+});
+
+test('listTransactions merges BPAY and linked PayID records without duplicating transfers', async () => {
+  const prisma = {
+    account: { findUnique: async () => ({ id: 'account-1', customerId: 'customer-1', coOwnerCustomerId: null }) },
+    transfer: { findMany: async () => [{
+      id: 'transfer-1', sourceAccountId: 'account-1', amountCents: 250, description: null,
+      createdAt: new Date('2026-10-16T00:00:00Z'), sourceAccount: { accountNumber: 'EXB-1' }, destinationAccount: { accountNumber: 'EXB-2' },
+      payment: { id: 'payment-payid', method: 'PAYID', description: 'Lunch', payeeNameSnapshot: 'Safe Recipient', createdAt: new Date('2026-10-16T00:00:01Z') },
+    }] },
+    payment: { findMany: async () => [{ id: 'payment-bpay', method: 'BPAY', amountCents: 100, description: null, payeeNameSnapshot: 'Example Energy', customerReference: '1234567890', createdAt: new Date('2026-10-16T00:00:02Z') }] },
+  };
+  const transactions = await createTransferService({ prisma }).listTransactions('customer-1', 'account-1');
+  assert.equal(transactions.length, 2);
+  assert.deepEqual(transactions.map(({ id, method, counterpartyAccountNumber, counterpartyLabel }) => ({ id, method, counterpartyAccountNumber, counterpartyLabel })), [
+    { id: 'payment-bpay', method: 'BPAY', counterpartyAccountNumber: null, counterpartyLabel: 'Example Energy' },
+    { id: 'payment-payid', method: 'PAYID', counterpartyAccountNumber: null, counterpartyLabel: 'Safe Recipient' },
   ]);
 });
 

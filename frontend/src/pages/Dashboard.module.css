@@ -95,7 +95,7 @@
   box-shadow: var(--dashboard-shadow-md);
 }
 
-.navGroup + .standaloneNav, .standaloneNav + .navGroup, .navGroup + .navGroup {
+.navGroup + .standaloneNav, .standaloneNav + .standaloneNav, .standaloneNav + .navGroup, .navGroup + .navGroup {
   margin-top: 1.25rem;
   padding-top: 1.25rem;
   border-top: 1px solid var(--dashboard-border);
@@ -151,6 +151,51 @@
 .label { display: grid; gap: 0.4rem; color: #e2e8f0; font-size: 0.875rem; font-weight: 600; }
 .optional { color: var(--dashboard-muted-foreground); font-weight: 400; }
 .fieldHelp { margin: -0.5rem 0 0; color: var(--dashboard-muted-foreground); font-size: 0.8125rem; line-height: 1.5; }
+
+.methodSelector {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.75rem;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.methodSelector legend { margin-bottom: 0.4rem; }
+.methodOption, .methodSelected {
+  min-height: 2.875rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.625rem 0.75rem;
+  border: 1px solid var(--dashboard-border);
+  border-radius: 0.625rem;
+  background: var(--dashboard-control);
+  color: var(--dashboard-foreground);
+  cursor: pointer;
+  font-weight: 600;
+}
+.methodSelected { border-color: var(--dashboard-accent); background: rgba(96, 165, 250, 0.2); box-shadow: inset 0 0 0 1px rgba(186, 230, 253, 0.16); }
+.methodOption:focus-within, .methodSelected:focus-within { outline: 2px solid var(--dashboard-focus); outline-offset: 2px; }
+
+.reviewCard, .receiptCard {
+  width: min(100%, 44rem);
+  box-sizing: border-box;
+  margin-top: 1rem;
+  padding: 1.5rem;
+  border: 1px solid var(--dashboard-border-strong);
+  border-radius: 1rem;
+  background: var(--dashboard-surface-fallback);
+  box-shadow: var(--dashboard-shadow-md);
+}
+.receiptCard { border-left: 3px solid var(--dashboard-success); }
+.reviewList { display: grid; gap: 0; margin: 1.25rem 0; }
+.reviewList > div { display: grid; grid-template-columns: minmax(8rem, 1fr) minmax(0, 2fr); gap: 1rem; padding: 0.75rem 0; border-bottom: 1px solid var(--dashboard-border); }
+.reviewList dt { color: var(--dashboard-muted-foreground); }
+.reviewList dd { margin: 0; font-weight: 600; overflow-wrap: anywhere; }
+.reviewActions { display: flex; flex-wrap: wrap; gap: 0.75rem; margin-top: 1rem; }
+.reviewActions button:not(.primaryButton) { min-height: 2.875rem; padding: 0.625rem 1rem; border: 1px solid var(--dashboard-border); border-radius: 0.625rem; background: var(--dashboard-control); color: var(--dashboard-foreground); font: inherit; font-weight: 600; cursor: pointer; }
+.reviewActions button:disabled { opacity: 0.48; cursor: not-allowed; }
 
 .input {
   width: 100%;
@@ -224,7 +269,7 @@
 .confirmDialog p { color: var(--dashboard-muted-foreground); }
 
 @supports ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
-  .topbar, .functionNav, .totalCard, .accountCard, .actionCard, .emptyState, .confirmDialog {
+  .topbar, .functionNav, .totalCard, .accountCard, .actionCard, .emptyState, .reviewCard, .receiptCard, .confirmDialog {
     background: var(--dashboard-surface-glass);
     -webkit-backdrop-filter: blur(var(--dashboard-blur)) saturate(125%);
     backdrop-filter: blur(var(--dashboard-blur)) saturate(125%);
@@ -240,7 +285,7 @@
   .functionNav { display: flex; flex-wrap: wrap; gap: 1rem; }
   .navGroup { flex: 1 1 16rem; }
   .standaloneNav { flex: 1 1 10rem; }
-  .navGroup + .standaloneNav, .standaloneNav + .navGroup, .navGroup + .navGroup { margin-top: 0; padding-top: 0; padding-left: 1rem; border-top: 0; border-left: 1px solid var(--dashboard-border); }
+  .navGroup + .standaloneNav, .standaloneNav + .standaloneNav, .standaloneNav + .navGroup, .navGroup + .navGroup { margin-top: 0; padding-top: 0; padding-left: 1rem; border-top: 0; border-left: 1px solid var(--dashboard-border); }
   .navList { grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr)); }
 }
 
@@ -250,14 +295,16 @@
   .summary { grid-template-columns: 1fr; gap: 1.5rem; margin-bottom: 2rem; }
   .sectionHeading { align-items: flex-start; flex-wrap: wrap; }
   .functionNav { display: block; }
-  .navGroup + .standaloneNav, .standaloneNav + .navGroup, .navGroup + .navGroup { margin-top: 1rem; padding-top: 1rem; padding-left: 0; border-top: 1px solid var(--dashboard-border); border-left: 0; }
+  .navGroup + .standaloneNav, .standaloneNav + .standaloneNav, .standaloneNav + .navGroup, .navGroup + .navGroup { margin-top: 1rem; padding-top: 1rem; padding-left: 0; border-top: 1px solid var(--dashboard-border); border-left: 0; }
+  .methodSelector { grid-template-columns: 1fr; }
+  .reviewList > div { grid-template-columns: 1fr; gap: 0.25rem; }
 }
 
 @media (max-width: 23.5rem) {
   .main { width: min(calc(100% - 1rem), 90rem); }
   .topbar { padding-inline: 0.75rem; }
   .customerName { max-width: 11rem; text-align: right; }
-  .accountCard, .actionCard, .functionNav, .totalCard { padding: 1rem; }
+  .accountCard, .actionCard, .reviewCard, .receiptCard, .functionNav, .totalCard { padding: 1rem; }
   .accountCardTop, .accountBalanceRow, .transactionRow { flex-direction: column; }
   .cardActions > button { width: 100%; }
   .confirmDialog { padding: 1rem; }

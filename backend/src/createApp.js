@@ -7,6 +7,7 @@ const transferService = require('./services/transferService');
 const sessionService = require('./services/sessionService');
 const scheduledTransferService = require('./services/scheduledTransferService');
 const cardService = require('./services/cardService');
+const paymentService = require('./services/paymentService');
 const { BankingError } = require('./errors/BankingError');
 const { getPrismaClient } = require('./lib/prisma');
 const { getSessionConfig, getFrontendOrigins } = require('./config/sessionConfig');
@@ -58,6 +59,7 @@ function createDefaultServices(prisma, sessionConfig = getSessionConfig()) {
     ...sessionService.createSessionService({ prisma, config: sessionConfig }),
     ...scheduledTransferService.createScheduledTransferService({ prisma }),
     ...cardService.createCardService({ prisma }),
+    ...paymentService.createPaymentService({ prisma }),
   };
 }
 
@@ -196,6 +198,22 @@ function createApp({
       return res.status(201).json(transfer);
     } catch (error) {
       return handleApiError(error, res, logger, 'Failed to transfer money');
+    }
+  });
+
+  app.post('/api/payments/resolve', authenticate, trustedOrigin, async (req, res) => {
+    try {
+      return res.json(await resolvedServices.resolvePayment(req.auth.customer.id, req.body ?? {}));
+    } catch (error) {
+      return handleApiError(error, res, logger, 'Failed to resolve payment');
+    }
+  });
+
+  app.post('/api/payments', authenticate, trustedOrigin, async (req, res) => {
+    try {
+      return res.status(201).json(await resolvedServices.createPayment(req.auth.customer.id, req.body ?? {}));
+    } catch (error) {
+      return handleApiError(error, res, logger, 'Failed to create payment');
     }
   });
 

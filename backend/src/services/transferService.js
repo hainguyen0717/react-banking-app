@@ -125,22 +125,70 @@ function createTransferService({ prisma = getPrismaClient() } = {}) {
       include: {
         sourceAccount: { select: { accountNumber: true } },
         destinationAccount: { select: { accountNumber: true } },
+        payment: {
+          select: {
+            id: true,
+            method: true,
+            description: true,
+            payeeNameSnapshot: true,
+            destinationAccountNumberSnapshot: true,
+            payIdSnapshot: true,
+            createdAt: true,
+          },
+        },
       },
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
     });
 
-    return transfers.map((transfer) => {
+    const transferTransactions = transfers.map((transfer) => {
       const sent = transfer.sourceAccountId === accountId;
+      const linkedPayment = transfer.payment;
       return {
-        id: transfer.id,
+        id: linkedPayment?.id || transfer.id,
+        method: linkedPayment?.method || 'TRANSFER',
         direction: sent ? 'SENT' : 'RECEIVED',
         amountCents: transfer.amountCents,
-        description: transfer.description,
-        counterpartyAccountNumber: sent
-          ? transfer.destinationAccount.accountNumber
-          : transfer.sourceAccount.accountNumber,
-        createdAt: transfer.createdAt,
+        description: linkedPayment?.description ?? transfer.description,
+        counterpartyAccountNumber: linkedPayment?.method === 'PAYID' && sent
+          ? null
+          : sent ? transfer.destinationAccount.accountNumber : transfer.sourceAccount.accountNumber,
+        counterpartyLabel: linkedPayment && sent
+          ? linkedPayment.payeeNameSnapshot
+          : (sent ? transfer.destinationAccount.accountNumber : transfer.sourceAccount.accountNumber),
+        customerReference: null,
+        createdAt: linkedPayment?.createdAt || transfer.createdAt,
       };
+    });
+
+    const bpayPayments = prisma.payment?.findMany
+      ? await prisma.payment.findMany({
+        where: { sourceAccountId: accountId, method: 'BPAY' },
+        select: {
+          id: true,
+          method: true,
+          amountCents: true,
+          description: true,
+          payeeNameSnapshot: true,
+          customerReference: true,
+          createdAt: true,
+        },
+      })
+      : [];
+    const paymentTransactions = bpayPayments.map((payment) => ({
+      id: payment.id,
+      method: payment.method,
+      direction: 'SENT',
+      amountCents: payment.amountCents,
+      description: payment.description,
+      counterpartyAccountNumber: null,
+      counterpartyLabel: payment.payeeNameSnapshot,
+      customerReference: payment.customerReference,
+      createdAt: payment.createdAt,
+    }));
+
+    return [...transferTransactions, ...paymentTransactions].sort((left, right) => {
+      const time = new Date(right.createdAt).valueOf() - new Date(left.createdAt).valueOf();
+      return time || right.id.localeCompare(left.id);
     });
   };
 

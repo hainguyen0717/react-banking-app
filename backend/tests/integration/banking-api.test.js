@@ -182,6 +182,49 @@ describe('authenticated banking API against isolated SQLite', { concurrency: fal
     return { accounts, transferCount };
   }
 
+  async function paymentState(accountIds) {
+    const [accounts, transferCount, paymentCount] = await Promise.all([
+      prisma.account.findMany({
+        where: { id: { in: accountIds } },
+        select: { id: true, balanceCents: true },
+        orderBy: { id: 'asc' },
+      }),
+      prisma.transfer.count(),
+      prisma.payment.count(),
+    ]);
+    return { accounts, transferCount, paymentCount };
+  }
+
+  function assertJson(result, status) {
+    assert.equal(result.response.status, status, JSON.stringify(result.body));
+    assert.match(result.response.headers.get('content-type') ?? '', /^application\/json\b/);
+  }
+
+  async function createPayId(accountId, overrides = {}) {
+    return prisma.payIdDirectoryEntry.create({
+      data: {
+        type: 'EMAIL',
+        value: 'recipient.payid@example.test',
+        displayName: 'PayID Recipient',
+        accountId,
+        isActive: true,
+        ...overrides,
+      },
+    });
+  }
+
+  async function createBpayBiller(overrides = {}) {
+    return prisma.bpayBiller.create({
+      data: {
+        billerCode: '123456',
+        name: 'Example Energy',
+        referenceLength: 10,
+        isActive: true,
+        ...overrides,
+      },
+    });
+  }
+
   before(async () => {
     temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'banking-api-integration-'));
     const databasePath = path.join(temporaryDirectory, 'integration.db');
@@ -225,7 +268,10 @@ describe('authenticated banking API against isolated SQLite', { concurrency: fal
     await prisma.cardTransaction.deleteMany();
     await prisma.card.deleteMany();
     await prisma.scheduledTransfer.deleteMany();
+    await prisma.payment.deleteMany();
     await prisma.transfer.deleteMany();
+    await prisma.payIdDirectoryEntry.deleteMany();
+    await prisma.bpayBiller.deleteMany();
     await prisma.account.deleteMany();
     await prisma.customer.deleteMany();
   });
@@ -243,6 +289,9 @@ describe('authenticated banking API against isolated SQLite', { concurrency: fal
       sessions: await prisma.authSession.count(),
       accounts: await prisma.account.count(),
       transfers: await prisma.transfer.count(),
+      payments: await prisma.payment.count(),
+      payIds: await prisma.payIdDirectoryEntry.count(),
+      bpayBillers: await prisma.bpayBiller.count(),
       scheduledTransfers: await prisma.scheduledTransfer.count(),
       cards: await prisma.card.count(),
       cardTransactions: await prisma.cardTransaction.count(),
@@ -312,6 +361,8 @@ describe('authenticated banking API against isolated SQLite', { concurrency: fal
       '/api/accounts',
       '/api/joint-accounts',
       '/api/transfers',
+      '/api/payments/resolve',
+      '/api/payments',
       '/api/profile',
       '/api/scheduled-transfers',
       '/api/cards',
@@ -334,6 +385,8 @@ describe('authenticated banking API against isolated SQLite', { concurrency: fal
     assert.deepEqual(documentation.body.paths['/api/customers'].post.security, []);
     assert.deepEqual(documentation.body.paths['/api/accounts'].get.security, [{ cookieAuth: [] }]);
     assert.deepEqual(documentation.body.paths['/api/transfers'].post.security, [{ cookieAuth: [] }]);
+    assert.deepEqual(documentation.body.paths['/api/payments/resolve'].post.security, [{ cookieAuth: [] }]);
+    assert.deepEqual(documentation.body.paths['/api/payments'].post.security, [{ cookieAuth: [] }]);
     assert.deepEqual(documentation.body.paths['/api/profile'].put.security, [{ cookieAuth: [] }]);
     assert.deepEqual(documentation.body.paths['/api/scheduled-transfers'].post.security, [{ cookieAuth: [] }]);
     assert.deepEqual(documentation.body.paths['/api/cards'].post.security, [{ cookieAuth: [] }]);
@@ -351,6 +404,8 @@ describe('authenticated banking API against isolated SQLite', { concurrency: fal
       ['/api/accounts', 'post'],
       ['/api/joint-accounts', 'post'],
       ['/api/transfers', 'post'],
+      ['/api/payments/resolve', 'post'],
+      ['/api/payments', 'post'],
       ['/api/scheduled-transfers', 'post'],
       ['/api/cards', 'post'],
       ['/api/cards/{cardId}/lock', 'post'],
@@ -363,6 +418,12 @@ describe('authenticated banking API against isolated SQLite', { concurrency: fal
     }
     for (const schema of [
       'UpdateProfileRequest',
+      'PaymentRequest',
+      'BankAccountPaymentRequest',
+      'PayIdPaymentRequest',
+      'BpayPaymentRequest',
+      'PaymentResolution',
+      'PaymentReceipt',
       'CreateScheduledTransferRequest',
       'ScheduledTransfer',
       'CardTransaction',
@@ -374,6 +435,9 @@ describe('authenticated banking API against isolated SQLite', { concurrency: fal
       sessions: await prisma.authSession.count(),
       accounts: await prisma.account.count(),
       transfers: await prisma.transfer.count(),
+      payments: await prisma.payment.count(),
+      payIds: await prisma.payIdDirectoryEntry.count(),
+      bpayBillers: await prisma.bpayBiller.count(),
       scheduledTransfers: await prisma.scheduledTransfer.count(),
       cards: await prisma.card.count(),
       cardTransactions: await prisma.cardTransaction.count(),
@@ -542,6 +606,8 @@ describe('authenticated banking API against isolated SQLite', { concurrency: fal
       { method: 'POST', path: '/api/cards/missing-card/lock' },
       { method: 'POST', path: '/api/cards/missing-card/unlock' },
       { method: 'POST', path: '/api/cards/missing-card/disable' },
+      { method: 'POST', path: '/api/payments/resolve', body: {} },
+      { method: 'POST', path: '/api/payments', body: {} },
     ];
     for (const request of newlyProtectedRequests) {
       const result = await client().request(request.path, {
@@ -607,6 +673,38 @@ describe('authenticated banking API against isolated SQLite', { concurrency: fal
     const inactive = await inactiveClient.request('/api/session');
     assert.equal(inactive.response.status, 401);
     assert.equal(await prisma.authSession.count(), 0);
+  });
+
+  test('payment endpoints reject malformed, expired, revoked, and inactive sessions before validation or side effects', async () => {
+    const malformed = await client().request('/api/payments', {
+      method: 'POST',
+      body: {},
+      cookieOverride: `eb_session=${'A'.repeat(43)}; eb_session=${'B'.repeat(43)}`,
+    });
+    assertJson(malformed, 401);
+    assert.deepEqual(malformed.body, { error: 'Authentication required.' });
+
+    const created = await createCustomer({ suffix: 'payment-session-states' });
+    const expiredClient = (await login(created.registration)).client;
+    const expiredSession = await prisma.authSession.findFirst({ where: { customerId: created.customer.id } });
+    await prisma.authSession.update({
+      where: { id: expiredSession.id },
+      data: { absoluteExpiresAt: new Date(Date.now() - 1_000) },
+    });
+    const expired = await expiredClient.request('/api/payments', { method: 'POST', body: {} });
+    assertJson(expired, 401);
+
+    const revokedClient = (await login(created.registration)).client;
+    await prisma.authSession.deleteMany({ where: { customerId: created.customer.id } });
+    const revoked = await revokedClient.request('/api/payments/resolve', { method: 'POST', body: {} });
+    assertJson(revoked, 401);
+
+    const inactiveClient = (await login(created.registration)).client;
+    await prisma.customer.update({ where: { id: created.customer.id }, data: { isActive: false } });
+    const inactive = await inactiveClient.request('/api/payments', { method: 'POST', body: {} });
+    assertJson(inactive, 401);
+    assert.equal(await prisma.payment.count(), 0);
+    assert.equal(await prisma.transfer.count(), 0);
   });
 
   test('profile updates are actor-scoped, immediately visible to concurrent sessions, and reject invalid input safely', async () => {
@@ -964,6 +1062,314 @@ describe('authenticated banking API against isolated SQLite', { concurrency: fal
     assert.deepEqual(await balancesAndTransferCount([source.id, destination.id]), baseline);
   });
 
+  test('bank-account payment resolution is passive and confirmation persists one linked transfer and one history row', async () => {
+    const payer = await createAuthenticatedCustomer({ suffix: 'bank-payment-payer' });
+    const recipient = await createAuthenticatedCustomer({ suffix: 'bank-payment-recipient' });
+    const source = await createAccount(payer.client, 'EVERYDAY', 'Bills account');
+    const destination = await createAccount(recipient.client, 'BUSINESS', 'Merchant settlement');
+    const requestBody = {
+      method: 'BANK_ACCOUNT',
+      sourceAccountId: source.id,
+      destinationAccountNumber: destination.accountNumber,
+      amountCents: 12_345,
+      description: 'Invoice 42',
+      customerId: recipient.customer.id,
+    };
+    const baseline = await paymentState([source.id, destination.id]);
+    const historiesBefore = await Promise.all([
+      payer.client.request(`/api/accounts/${source.id}/transactions`),
+      recipient.client.request(`/api/accounts/${destination.id}/transactions`),
+    ]);
+
+    const firstResolution = await payer.client.request('/api/payments/resolve', { method: 'POST', body: requestBody });
+    const secondResolution = await payer.client.request('/api/payments/resolve', { method: 'POST', body: requestBody });
+    assertJson(firstResolution, 200);
+    assert.deepEqual(secondResolution.body, firstResolution.body);
+    assert.deepEqual(firstResolution.body, {
+      method: 'BANK_ACCOUNT',
+      sourceAccountNumber: source.accountNumber,
+      amountCents: 12_345,
+      description: 'Invoice 42',
+      payeeName: 'Merchant settlement',
+      destinationAccountNumber: destination.accountNumber,
+    });
+    assert.deepEqual(await paymentState([source.id, destination.id]), baseline);
+    assert.deepEqual(historiesBefore.map(({ body }) => body), [{ transactions: [] }, { transactions: [] }]);
+
+    const confirmed = await payer.client.request('/api/payments', { method: 'POST', body: requestBody });
+    assertJson(confirmed, 201);
+    assert.deepEqual({
+      ...confirmed.body,
+      id: '<id>',
+      createdAt: '<createdAt>',
+    }, {
+      id: '<id>',
+      method: 'BANK_ACCOUNT',
+      sourceAccountNumber: source.accountNumber,
+      amountCents: 12_345,
+      description: 'Invoice 42',
+      payeeName: 'Merchant settlement',
+      destinationAccountNumber: destination.accountNumber,
+      payId: null,
+      billerCode: null,
+      customerReference: null,
+      createdAt: '<createdAt>',
+    });
+    assert.ok(Date.parse(confirmed.body.createdAt));
+
+    const persistedPayment = await prisma.payment.findUnique({
+      where: { id: confirmed.body.id },
+      include: { transfer: true },
+    });
+    assert.equal(persistedPayment.customerId, payer.customer.id);
+    assert.equal(persistedPayment.payeeNameSnapshot, 'Merchant settlement');
+    assert.equal(persistedPayment.transfer.amountCents, 12_345);
+    assert.deepEqual(await paymentState([source.id, destination.id]), {
+      accounts: [
+        { id: destination.id, balanceCents: EXPECTED_OPENING_BALANCE_CENTS + 12_345 },
+        { id: source.id, balanceCents: EXPECTED_OPENING_BALANCE_CENTS - 12_345 },
+      ].sort((left, right) => left.id.localeCompare(right.id)),
+      transferCount: 1,
+      paymentCount: 1,
+    });
+
+    const outgoing = await payer.client.request(`/api/accounts/${source.id}/transactions`);
+    const incoming = await recipient.client.request(`/api/accounts/${destination.id}/transactions`);
+    assertJson(outgoing, 200);
+    assertJson(incoming, 200);
+    assert.equal(outgoing.body.transactions.length, 1);
+    assert.equal(incoming.body.transactions.length, 1);
+    assert.deepEqual(
+      outgoing.body.transactions.map(({ id, method, direction, counterpartyAccountNumber, counterpartyLabel }) => (
+        { id, method, direction, counterpartyAccountNumber, counterpartyLabel }
+      )),
+      [{
+        id: confirmed.body.id,
+        method: 'BANK_ACCOUNT',
+        direction: 'SENT',
+        counterpartyAccountNumber: destination.accountNumber,
+        counterpartyLabel: 'Merchant settlement',
+      }],
+    );
+    assert.equal(incoming.body.transactions[0].id, confirmed.body.id);
+    assert.equal(incoming.body.transactions[0].method, 'BANK_ACCOUNT');
+    assert.equal(incoming.body.transactions[0].direction, 'RECEIVED');
+    const stateAfterReads = await paymentState([source.id, destination.id]);
+    assert.deepEqual((await payer.client.request(`/api/accounts/${source.id}/transactions`)).body, outgoing.body);
+    assert.deepEqual(await paymentState([source.id, destination.id]), stateAfterReads);
+
+    const legacyTransfer = await payer.client.request('/api/transfers', {
+      method: 'POST',
+      body: {
+        sourceAccountId: source.id,
+        destinationAccountNumber: destination.accountNumber,
+        amountCents: 500,
+        description: 'Legacy transfer still works',
+      },
+    });
+    assertJson(legacyTransfer, 201);
+    await prisma.transfer.update({
+      where: { id: legacyTransfer.body.id },
+      data: { createdAt: new Date('2040-01-01T00:00:00.000Z') },
+    });
+    const mixedHistory = await payer.client.request(`/api/accounts/${source.id}/transactions`);
+    assert.deepEqual(mixedHistory.body.transactions.map(({ id, method }) => ({ id, method })), [
+      { id: legacyTransfer.body.id, method: 'TRANSFER' },
+      { id: confirmed.body.id, method: 'BANK_ACCOUNT' },
+    ]);
+    assert.equal(mixedHistory.body.transactions.filter(({ id }) => id === confirmed.body.id).length, 1);
+  });
+
+  test('PayID resolution is case-insensitive and never exposes its mapped account in review, receipt, or outgoing history', async () => {
+    const payer = await createAuthenticatedCustomer({ suffix: 'payid-payer' });
+    const recipient = await createAuthenticatedCustomer({ suffix: 'payid-recipient' });
+    const source = await createAccount(payer.client, 'EVERYDAY', 'PayID source');
+    const destination = await createAccount(recipient.client, 'BUSINESS', 'Private mapped account');
+    await createPayId(destination.id);
+    const requestBody = {
+      method: 'PAYID',
+      sourceAccountId: source.id,
+      payId: '  Recipient.PayID@Example.Test  ',
+      amountCents: 4_321,
+      description: 'Email payment',
+    };
+
+    const resolution = await payer.client.request('/api/payments/resolve', { method: 'POST', body: requestBody });
+    assertJson(resolution, 200);
+    assert.deepEqual(resolution.body, {
+      method: 'PAYID',
+      sourceAccountNumber: source.accountNumber,
+      amountCents: 4_321,
+      description: 'Email payment',
+      payeeName: 'PayID Recipient',
+      payId: 'recipient.payid@example.test',
+    });
+    assert.equal(JSON.stringify(resolution.body).includes(destination.accountNumber), false);
+    assert.equal(JSON.stringify(resolution.body).includes(destination.id), false);
+
+    const confirmed = await payer.client.request('/api/payments', { method: 'POST', body: requestBody });
+    assertJson(confirmed, 201);
+    assert.equal(confirmed.body.payId, 'recipient.payid@example.test');
+    assert.equal(confirmed.body.destinationAccountNumber, null);
+    assert.equal(confirmed.body.payeeName, 'PayID Recipient');
+    assert.equal(JSON.stringify(confirmed.body).includes(destination.accountNumber), false);
+    assert.equal(JSON.stringify(confirmed.body).includes(destination.id), false);
+
+    const outgoing = await payer.client.request(`/api/accounts/${source.id}/transactions`);
+    const incoming = await recipient.client.request(`/api/accounts/${destination.id}/transactions`);
+    assertJson(outgoing, 200);
+    assertJson(incoming, 200);
+    assert.equal(outgoing.body.transactions.length, 1);
+    assert.equal(incoming.body.transactions.length, 1);
+    assert.deepEqual({
+      id: outgoing.body.transactions[0].id,
+      method: outgoing.body.transactions[0].method,
+      direction: outgoing.body.transactions[0].direction,
+      counterpartyAccountNumber: outgoing.body.transactions[0].counterpartyAccountNumber,
+      counterpartyLabel: outgoing.body.transactions[0].counterpartyLabel,
+    }, {
+      id: confirmed.body.id,
+      method: 'PAYID',
+      direction: 'SENT',
+      counterpartyAccountNumber: null,
+      counterpartyLabel: 'PayID Recipient',
+    });
+    assert.equal(JSON.stringify(outgoing.body).includes(destination.accountNumber), false);
+    assert.equal(JSON.stringify(outgoing.body).includes(destination.id), false);
+    assert.deepEqual(await paymentState([source.id, destination.id]), {
+      accounts: [
+        { id: destination.id, balanceCents: EXPECTED_OPENING_BALANCE_CENTS + 4_321 },
+        { id: source.id, balanceCents: EXPECTED_OPENING_BALANCE_CENTS - 4_321 },
+      ].sort((left, right) => left.id.localeCompare(right.id)),
+      transferCount: 1,
+      paymentCount: 1,
+    });
+  });
+
+  test('either joint owner can make a BPAY payment with a source-only debit and both owners see the same history', async () => {
+    const primary = await createAuthenticatedCustomer({ suffix: 'bpay-primary', email: 'bpay.primary@example.test' });
+    const coOwner = await createAuthenticatedCustomer({ suffix: 'bpay-coowner', email: 'bpay.coowner@example.test' });
+    const joint = await createJointAccount(primary.client, coOwner.customer.email, 'SAVINGS', 'Joint bills');
+    await createBpayBiller();
+    const requestBody = {
+      method: 'BPAY',
+      sourceAccountId: joint.id,
+      billerCode: '123456',
+      customerReference: '0123456789',
+      amountCents: 7_500,
+      description: 'Electricity',
+      customerId: primary.customer.id,
+    };
+
+    const resolution = await coOwner.client.request('/api/payments/resolve', {
+      method: 'POST',
+      body: requestBody,
+      origin: baseUrl,
+    });
+    assertJson(resolution, 200);
+    assert.deepEqual(resolution.body, {
+      method: 'BPAY',
+      sourceAccountNumber: joint.accountNumber,
+      amountCents: 7_500,
+      description: 'Electricity',
+      payeeName: 'Example Energy',
+      billerCode: '123456',
+      customerReference: '0123456789',
+    });
+    assert.deepEqual(await paymentState([joint.id]), {
+      accounts: [{ id: joint.id, balanceCents: EXPECTED_OPENING_BALANCE_CENTS }],
+      transferCount: 0,
+      paymentCount: 0,
+    });
+
+    const confirmed = await coOwner.client.request('/api/payments', { method: 'POST', body: requestBody });
+    assertJson(confirmed, 201);
+    assert.equal(confirmed.body.billerCode, '123456');
+    assert.equal(confirmed.body.customerReference, '0123456789');
+    assert.equal(confirmed.body.destinationAccountNumber, null);
+    assert.equal(confirmed.body.payId, null);
+    assert.deepEqual(await paymentState([joint.id]), {
+      accounts: [{ id: joint.id, balanceCents: EXPECTED_OPENING_BALANCE_CENTS - 7_500 }],
+      transferCount: 0,
+      paymentCount: 1,
+    });
+    const persisted = await prisma.payment.findUnique({ where: { id: confirmed.body.id } });
+    assert.equal(persisted.customerId, coOwner.customer.id);
+    assert.equal(persisted.transferId, null);
+
+    const primaryHistory = await primary.client.request(`/api/accounts/${joint.id}/transactions`);
+    const coOwnerHistory = await coOwner.client.request(`/api/accounts/${joint.id}/transactions`);
+    assertJson(primaryHistory, 200);
+    assert.deepEqual(coOwnerHistory.body, primaryHistory.body);
+    assert.deepEqual(primaryHistory.body.transactions.map((entry) => ({
+      id: entry.id,
+      method: entry.method,
+      direction: entry.direction,
+      amountCents: entry.amountCents,
+      counterpartyAccountNumber: entry.counterpartyAccountNumber,
+      counterpartyLabel: entry.counterpartyLabel,
+      customerReference: entry.customerReference,
+    })), [{
+      id: confirmed.body.id,
+      method: 'BPAY',
+      direction: 'SENT',
+      amountCents: 7_500,
+      counterpartyAccountNumber: null,
+      counterpartyLabel: 'Example Energy',
+      customerReference: '0123456789',
+    }]);
+  });
+
+  test('invalid, missing, self, foreign-source, and unfunded payments are atomic', async () => {
+    const owner = await createAuthenticatedCustomer({ suffix: 'payment-negative-owner' });
+    const other = await createAuthenticatedCustomer({ suffix: 'payment-negative-other' });
+    const source = await createAccount(owner.client, 'EVERYDAY', 'Payment source');
+    const ownedDestination = await createAccount(owner.client, 'SAVINGS', 'Also mine');
+    const foreignDestination = await createAccount(other.client, 'BUSINESS', 'Other account');
+    await createPayId(foreignDestination.id);
+    await createPayId(source.id, { value: 'self.payid@example.test', displayName: 'Self PayID' });
+    await createPayId(foreignDestination.id, {
+      value: 'inactive.payid@example.test',
+      displayName: 'Inactive PayID',
+      isActive: false,
+    });
+    await createBpayBiller();
+    await createBpayBiller({ billerCode: '99999', name: 'Inactive Biller', referenceLength: 8, isActive: false });
+    const baseline = await paymentState([source.id, ownedDestination.id, foreignDestination.id]);
+    const bankBase = {
+      method: 'BANK_ACCOUNT',
+      sourceAccountId: source.id,
+      destinationAccountNumber: foreignDestination.accountNumber,
+      amountCents: 100,
+    };
+    const cases = [
+      { actor: owner.client, status: 400, body: { ...bankBase, amountCents: 0 } },
+      { actor: owner.client, status: 400, body: { ...bankBase, amountCents: 1.5 } },
+      { actor: owner.client, status: 400, body: { ...bankBase, description: 'x'.repeat(141) } },
+      { actor: owner.client, status: 400, body: { ...bankBase, payId: 'irrelevant@example.test' } },
+      { actor: owner.client, status: 404, body: { ...bankBase, sourceAccountId: 'missing-source' } },
+      { actor: owner.client, status: 404, body: { ...bankBase, destinationAccountNumber: 'EXB-MISSING' } },
+      { actor: owner.client, status: 400, body: { ...bankBase, destinationAccountNumber: ownedDestination.accountNumber } },
+      { actor: owner.client, status: 409, body: { ...bankBase, amountCents: EXPECTED_OPENING_BALANCE_CENTS + 1 } },
+      { actor: owner.client, status: 404, body: { method: 'PAYID', sourceAccountId: source.id, payId: 'missing@example.test', amountCents: 100 } },
+      { actor: owner.client, status: 404, body: { method: 'PAYID', sourceAccountId: source.id, payId: 'inactive.payid@example.test', amountCents: 100 } },
+      { actor: owner.client, status: 400, body: { method: 'PAYID', sourceAccountId: source.id, payId: 'self.payid@example.test', amountCents: 100 } },
+      { actor: owner.client, status: 404, body: { method: 'BPAY', sourceAccountId: source.id, billerCode: '11111', customerReference: '12345678', amountCents: 100 } },
+      { actor: owner.client, status: 404, body: { method: 'BPAY', sourceAccountId: source.id, billerCode: '99999', customerReference: '12345678', amountCents: 100 } },
+      { actor: owner.client, status: 400, body: { method: 'BPAY', sourceAccountId: source.id, billerCode: '123456', customerReference: '1234ABC890', amountCents: 100 } },
+      { actor: owner.client, status: 400, body: { method: 'BPAY', sourceAccountId: source.id, billerCode: '123456', customerReference: '123456789', amountCents: 100 } },
+      { actor: other.client, status: 403, body: { ...bankBase, customerId: owner.customer.id } },
+    ];
+    for (const scenario of cases) {
+      const result = await scenario.actor.request('/api/payments', { method: 'POST', body: scenario.body });
+      assertJson(result, scenario.status);
+      assert.deepEqual(Object.keys(result.body), ['error']);
+      assert.deepEqual(await paymentState([source.id, ownedDestination.id, foreignDestination.id]), baseline);
+    }
+    assert.deepEqual((await owner.client.request(`/api/accounts/${source.id}/transactions`)).body, { transactions: [] });
+    assert.deepEqual((await other.client.request(`/api/accounts/${foreignDestination.id}/transactions`)).body, { transactions: [] });
+  });
+
   test('new feature mutations require an exact trusted Origin and have no rejected-request side effects', async () => {
     const actor = await createAuthenticatedCustomer({ suffix: 'feature-origin-actor' });
     const recipient = await createAuthenticatedCustomer({ suffix: 'feature-origin-recipient' });
@@ -992,6 +1398,26 @@ describe('authenticated banking API against isolated SQLite', { concurrency: fal
           scheduledFor: '2030-01-15T11:00:00.000Z',
         },
       },
+      {
+        method: 'POST',
+        path: '/api/payments/resolve',
+        body: {
+          method: 'BANK_ACCOUNT',
+          sourceAccountId: source.id,
+          destinationAccountNumber: destination.accountNumber,
+          amountCents: 500,
+        },
+      },
+      {
+        method: 'POST',
+        path: '/api/payments',
+        body: {
+          method: 'BANK_ACCOUNT',
+          sourceAccountId: source.id,
+          destinationAccountNumber: destination.accountNumber,
+          amountCents: 500,
+        },
+      },
       { method: 'POST', path: '/api/cards', body: { accountId: source.id } },
       { method: 'POST', path: `/api/cards/${card.body.id}/lock` },
       { method: 'POST', path: `/api/cards/${card.body.id}/unlock` },
@@ -1014,6 +1440,7 @@ describe('authenticated banking API against isolated SQLite', { concurrency: fal
     assert.equal(profileAfter.lastName, profileBefore.lastName);
     assert.equal(profileAfter.address, profileBefore.address);
     assert.equal(await prisma.scheduledTransfer.count(), 0);
+    assert.equal(await prisma.payment.count(), 0);
     assert.equal(await prisma.card.count(), 1);
     assert.equal(await prisma.cardTransaction.count(), 5);
     assert.equal((await prisma.card.findUnique({ where: { id: card.body.id } })).status, 'ACTIVE');
@@ -1214,7 +1641,9 @@ describe('authenticated banking API against isolated SQLite', { concurrency: fal
       );
       const serialized = JSON.stringify(created.body);
       for (const sensitive of ['passwordHash', 'token', 'cvv', 'pin']) assert.doesNotMatch(serialized, new RegExp(sensitive, 'i'));
-      assert.doesNotMatch(serialized, /\b\d{12,19}\b/);
+      for (const rawCardField of ['pan', 'cardNumber', 'fullNumber']) {
+        assert.equal(rawCardField in created.body, false);
+      }
     }
     assert.equal(await prisma.card.count(), 3);
     assert.equal(await prisma.cardTransaction.count(), 15);

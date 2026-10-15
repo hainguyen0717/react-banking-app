@@ -2,8 +2,8 @@
   "openapi": "3.0.3",
   "info": {
     "title": "Express Bank Demo API",
-    "version": "4.0.0",
-    "description": "Deterministic customer profile, opaque-session, account, immediate/scheduled transfer, and demo card APIs. Protected actor identity is derived exclusively from the eb_session HttpOnly cookie."
+    "version": "5.0.0",
+    "description": "Deterministic customer profile, opaque-session, account, immediate/scheduled transfer, Payments (bank account, email PayID and BPAY), and demo card APIs. Protected actor identity is derived exclusively from the eb_session HttpOnly cookie. Cookie-authenticated mutations also require a configured trusted Origin."
   },
   "servers": [
     {
@@ -139,6 +139,40 @@
         },
         "responses": {
           "201": { "description": "Transfer completed", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Transfer" } } } },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" },
+          "409": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/payments/resolve": {
+      "post": {
+        "summary": "Resolve and validate an immediate AUD payment for review",
+        "description": "Passive validation only; no balances or records change. PayID responses contain the normalized PayID and safe display name, never its mapped account.",
+        "tags": ["Payments"],
+        "security": [{ "cookieAuth": [] }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PaymentRequest" } } } },
+        "responses": {
+          "200": { "description": "Safe payment review", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PaymentResolution" } } } },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" },
+          "409": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/payments": {
+      "post": {
+        "summary": "Confirm an immediate AUD payment",
+        "description": "Re-resolves the destination and authorization inside the confirmation transaction. Bank-account and PayID payments debit and credit internal accounts atomically; BPAY records a source-only debit. The immutable response is the receipt.",
+        "tags": ["Payments"],
+        "security": [{ "cookieAuth": [] }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PaymentRequest" } } } },
+        "responses": {
+          "201": { "description": "Payment receipt", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PaymentReceipt" } } } },
           "400": { "$ref": "#/components/responses/Error" },
           "401": { "$ref": "#/components/responses/Error" },
           "403": { "$ref": "#/components/responses/Error" },
@@ -355,15 +389,53 @@
       },
       "Transaction": {
         "type": "object",
-        "required": ["id", "direction", "amountCents", "counterpartyAccountNumber", "createdAt"],
+        "required": ["id", "method", "direction", "amountCents", "counterpartyAccountNumber", "counterpartyLabel", "customerReference", "createdAt"],
         "properties": {
           "id": { "type": "string", "format": "uuid" },
+          "method": { "type": "string", "enum": ["TRANSFER", "BANK_ACCOUNT", "PAYID", "BPAY"] },
           "direction": { "type": "string", "enum": ["SENT", "RECEIVED"] },
           "amountCents": { "type": "integer", "minimum": 1 },
           "description": { "type": "string", "nullable": true },
-          "counterpartyAccountNumber": { "type": "string" },
+          "counterpartyAccountNumber": { "type": "string", "nullable": true, "description": "Null for outgoing PayID and BPAY entries. Incoming PayID may show the source account but never the PayID-mapped destination account." },
+          "counterpartyLabel": { "type": "string" },
+          "customerReference": { "type": "string", "nullable": true },
           "createdAt": { "type": "string", "format": "date-time" }
         }
+      },
+      "PaymentRequest": {
+        "oneOf": [
+          { "$ref": "#/components/schemas/BankAccountPaymentRequest" },
+          { "$ref": "#/components/schemas/PayIdPaymentRequest" },
+          { "$ref": "#/components/schemas/BpayPaymentRequest" }
+        ],
+        "discriminator": { "propertyName": "method", "mapping": { "BANK_ACCOUNT": "#/components/schemas/BankAccountPaymentRequest", "PAYID": "#/components/schemas/PayIdPaymentRequest", "BPAY": "#/components/schemas/BpayPaymentRequest" } }
+      },
+      "BankAccountPaymentRequest": {
+        "type": "object", "additionalProperties": false,
+        "required": ["method", "sourceAccountId", "destinationAccountNumber", "amountCents"],
+        "properties": { "method": { "type": "string", "enum": ["BANK_ACCOUNT"] }, "sourceAccountId": { "type": "string" }, "destinationAccountNumber": { "type": "string" }, "amountCents": { "type": "integer", "minimum": 1 }, "description": { "type": "string", "maxLength": 140 } }
+      },
+      "PayIdPaymentRequest": {
+        "type": "object", "additionalProperties": false,
+        "required": ["method", "sourceAccountId", "payId", "amountCents"],
+        "properties": { "method": { "type": "string", "enum": ["PAYID"] }, "sourceAccountId": { "type": "string" }, "payId": { "type": "string", "format": "email", "description": "Email PayID, normalized to lowercase." }, "amountCents": { "type": "integer", "minimum": 1 }, "description": { "type": "string", "maxLength": 140 } }
+      },
+      "BpayPaymentRequest": {
+        "type": "object", "additionalProperties": false,
+        "required": ["method", "sourceAccountId", "billerCode", "customerReference", "amountCents"],
+        "properties": { "method": { "type": "string", "enum": ["BPAY"] }, "sourceAccountId": { "type": "string" }, "billerCode": { "type": "string", "pattern": "^[0-9]+$" }, "customerReference": { "type": "string", "pattern": "^[0-9]+$" }, "amountCents": { "type": "integer", "minimum": 1 }, "description": { "type": "string", "maxLength": 140 } }
+      },
+      "PaymentResolution": {
+        "type": "object",
+        "description": "Safe review projection. Method-specific fields not applicable to the selected method are omitted.",
+        "required": ["method", "sourceAccountNumber", "amountCents", "description", "payeeName"],
+        "properties": { "method": { "type": "string", "enum": ["BANK_ACCOUNT", "PAYID", "BPAY"] }, "sourceAccountNumber": { "type": "string" }, "amountCents": { "type": "integer", "minimum": 1 }, "description": { "type": "string", "nullable": true }, "payeeName": { "type": "string" }, "destinationAccountNumber": { "type": "string", "nullable": true }, "payId": { "type": "string", "format": "email", "nullable": true }, "billerCode": { "type": "string", "nullable": true }, "customerReference": { "type": "string", "nullable": true } }
+      },
+      "PaymentReceipt": {
+        "allOf": [
+          { "$ref": "#/components/schemas/PaymentResolution" },
+          { "type": "object", "required": ["id", "createdAt"], "properties": { "id": { "type": "string", "format": "uuid" }, "destinationAccountNumber": { "type": "string", "nullable": true }, "payId": { "type": "string", "format": "email", "nullable": true }, "billerCode": { "type": "string", "nullable": true }, "customerReference": { "type": "string", "nullable": true }, "createdAt": { "type": "string", "format": "date-time" } } }
+        ]
       },
       "CreateScheduledTransferRequest": {
         "allOf": [{ "$ref": "#/components/schemas/CreateTransferRequest" }, { "type": "object", "required": ["scheduledFor"], "properties": { "scheduledFor": { "type": "string", "format": "date-time", "description": "Strict future UTC ISO-8601 instant chosen from the local UI picker." } } }]

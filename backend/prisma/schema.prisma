@@ -25,6 +25,7 @@ model Customer {
   sessions              AuthSession[]
   scheduledTransfers    ScheduledTransfer[]
   cards                  Card[]
+  payments               Payment[]
 }
 
 model AuthSession {
@@ -59,6 +60,8 @@ model Account {
   scheduledOutgoingTransfers ScheduledTransfer[] @relation("ScheduledOutgoingTransfers")
   scheduledIncomingTransfers ScheduledTransfer[] @relation("ScheduledIncomingTransfers")
   cards                Card[]
+  payIdDirectoryEntries PayIdDirectoryEntry[]
+  outgoingPayments     Payment[] @relation("OutgoingPayments")
 
   @@index([customerId])
   @@index([coOwnerCustomerId])
@@ -74,9 +77,65 @@ model Transfer {
   sourceAccount        Account  @relation("OutgoingTransfers", fields: [sourceAccountId], references: [id], onDelete: Restrict)
   destinationAccount   Account  @relation("IncomingTransfers", fields: [destinationAccountId], references: [id], onDelete: Restrict)
   scheduledTransfer    ScheduledTransfer?
+  payment              Payment?
 
   @@index([sourceAccountId, createdAt])
   @@index([destinationAccountId, createdAt])
+}
+
+model PayIdDirectoryEntry {
+  id          String    @id @default(uuid())
+  type        String    @default("EMAIL")
+  value       String    @unique
+  displayName String
+  accountId   String
+  isActive    Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  account     Account   @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  payments    Payment[]
+
+  @@index([accountId])
+}
+
+model BpayBiller {
+  id              String    @id @default(uuid())
+  billerCode      String    @unique
+  name            String
+  referenceLength Int
+  isActive        Boolean   @default(true)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  payments        Payment[]
+}
+
+model Payment {
+  id                               String               @id @default(uuid())
+  customerId                       String
+  sourceAccountId                  String
+  method                           String
+  amountCents                      Int
+  description                      String?
+  transferId                       String?              @unique
+  payIdDirectoryEntryId            String?
+  bpayBillerId                     String?
+  customerReference                String?
+  sourceAccountNumberSnapshot      String
+  payeeNameSnapshot                String
+  destinationAccountNumberSnapshot String?
+  payIdSnapshot                    String?
+  billerCodeSnapshot               String?
+  createdAt                        DateTime             @default(now())
+  customer                         Customer             @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  sourceAccount                    Account              @relation("OutgoingPayments", fields: [sourceAccountId], references: [id], onDelete: Restrict)
+  transfer                         Transfer?            @relation(fields: [transferId], references: [id], onDelete: Restrict)
+  payIdDirectoryEntry              PayIdDirectoryEntry? @relation(fields: [payIdDirectoryEntryId], references: [id], onDelete: Restrict)
+  bpayBiller                       BpayBiller?          @relation(fields: [bpayBillerId], references: [id], onDelete: Restrict)
+
+  @@index([customerId, createdAt])
+  @@index([sourceAccountId, createdAt])
+  @@index([payIdDirectoryEntryId])
+  @@index([bpayBillerId])
 }
 
 model ScheduledTransfer {

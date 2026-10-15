@@ -1,6 +1,6 @@
 # Banking functions and APIs
 
-Last reviewed: 15 October 2026
+Last reviewed: 16 October 2026
 
 API paths are case-sensitive. Protected APIs derive identity only from the verified opaque `eb_session` HttpOnly cookie; they do not accept a customer identity in the URL or request body.
 
@@ -10,7 +10,7 @@ API paths are case-sensitive. Protected APIs derive identity only from the verif
 | ---: | --- | --- | --- | --- |
 | 1 | Create a customer | Registers normalized customer data and stores a bcrypt password hash. Duplicate emails are rejected. | `POST /api/customers` | **Implemented** |
 | 2 | Login | Authenticates an active customer, updates `lastLoginAt`, creates a hashed server-side session, sets `eb_session`, and returns a non-sensitive profile. | `POST /api/login` | **Implemented** |
-| 3 | Navigate the dashboard | Uses an Accounts group, standalone Cards destination, Transfer group, and Profile group. Cards appears immediately after Accounts and before Transfer. Query-backed views preserve active state; missing or invalid views fall back to accounts, and `/welcome` redirects to the dashboard for compatibility. | Frontend routes under `/dashboard?view=...`, including `accounts`, `new-account`, `new-joint-account`, `cards`, `transfer`, `schedule-transfer`, `scheduled-transfers`, and `profile` | **Implemented** |
+| 3 | Navigate the dashboard | Uses an Accounts group, standalone Cards and Payments destinations, Transfer group, and Profile group. Payments appears after Cards and before Transfer. Query-backed views preserve active state; missing or invalid views fall back to accounts, and `/welcome` redirects to the dashboard for compatibility. | Frontend routes under `/dashboard?view=...`, including `accounts`, `new-account`, `new-joint-account`, `cards`, `payments`, `transfer`, `schedule-transfer`, `scheduled-transfers`, and `profile` | **Implemented** |
 | 4 | Create an account | Creates an `EVERYDAY`, `SAVINGS`, or `BUSINESS` AUD account for the authenticated customer. | `POST /api/accounts` | **Implemented** |
 | 5 | View accounts | Lists all personal and joint accounts owned by the authenticated active customer. | `GET /api/accounts` | **Implemented** |
 | 6 | View transaction history | Lists one authenticated-owned account's transfers newest first. | `GET /api/accounts/:accountId/transactions` | **Implemented** |
@@ -24,6 +24,7 @@ API paths are case-sensitive. Protected APIs derive identity only from the verif
 | 14 | Update personal information | Updates required first name, last name, and address for the authenticated customer and refreshes the in-memory dashboard profile. | `PUT /api/profile`, `/dashboard?view=profile` | **Implemented** |
 | 15 | Schedule a transfer | Creates a private one-time future transfer from a picker-only local date/time. Funds are checked but not reserved; due processing rechecks rules and records `COMPLETED` or side-effect-free `FAILED`. | `GET\|POST /api/scheduled-transfers`, schedule dashboard views | **Implemented** |
 | 16 | Manage demo debit cards | Opens holder-specific cards on personally or jointly owned accounts, creates exactly five display-only samples, and supports temporary lock/unlock or permanent disable. | Card APIs, `/dashboard?view=cards` | **Implemented** |
+| 17 | Make an immediate payment | Resolves and reviews an Express account number, email PayID, or fictional BPAY biller before final confirmation. Account/PayID payments update both internal sides; BPAY debits the source only. Joint owners may pay, while actor-owned destinations, invalid references, and overdrafts are side-effect-free failures. | `POST /api/payments/resolve`, `POST /api/payments`, `/dashboard?view=payments` | **Implemented** |
 
 ## Operational functions
 
@@ -50,6 +51,8 @@ API paths are case-sensitive. Protected APIs derive identity only from the verif
 | `POST` | `/api/accounts` | `201` created account | `400` invalid type/name, `401` authentication required, `403` untrusted origin |
 | `POST` | `/api/joint-accounts` | `201` one shared account with two safe owners | `400` invalid input, `401` authentication required, `403` untrusted origin, `404` missing co-owner, `409` inactive owner |
 | `POST` | `/api/transfers` | `201` transfer receipt | `400` validation/self-transfer, `403` ownership, `404` account missing, `409` insufficient funds |
+| `POST` | `/api/payments/resolve` | `200` safe, non-mutating review details | `400` validation/self-payment, `401` authentication, `403` ownership/origin, `404` source/payee/biller missing, `409` insufficient funds |
+| `POST` | `/api/payments` | `201` immutable safe payment receipt | `400` validation/self-payment, `401` authentication, `403` ownership/origin, `404` source/payee/biller missing, `409` insufficient funds |
 | `GET`, `POST` | `/api/scheduled-transfers` | `200` list or `201` pending schedule | `400` validation/time, `401` authentication, `403` ownership/origin, `404` account missing, `409` current funds |
 | `GET`, `POST` | `/api/cards` | `200` holder list or `201` active masked card | `400` validation, `401` authentication, `403` ownership/origin, `404` account missing |
 | `GET` | `/api/cards/:cardId` | `200` holder-owned masked card | `401` authentication, `403` foreign card, `404` missing card |
@@ -66,6 +69,7 @@ Swagger **Try it out** uses the API's serving origin and browser-managed HttpOnl
 
 - Values are integer AUD cents. The dashboard parses decimal AUD input into cents without floating-point arithmetic.
 - One transfer record is shown as `SENT` for its source and `RECEIVED` for its destination.
+- Payment history uses `BANK_ACCOUNT`, `PAYID`, or `BPAY` alongside legacy `TRANSFER`. Linked account/PayID transfers are not duplicated; BPAY is source-only. Outgoing PayID history and receipts never reveal its mapped account.
 - Customers may own multiple personal and joint accounts. Multiple accounts for the same owner pair are allowed.
 - Each joint account has one balance and one history. Each owner dashboard counts that full balance once because the shared account is returned once per owner.
 - Account responses retain `customerId` as creator/legacy primary metadata and add `ownershipType` plus a safe `owners` array. Either listed joint owner is authorized.

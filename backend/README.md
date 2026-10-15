@@ -25,7 +25,7 @@ Standard **Try it out** requests use the serving origin and include browser cred
 
 The in-process scheduled-transfer worker runs once at startup and then every `SCHEDULED_TRANSFER_POLL_INTERVAL_MS` (default `1000`). Shutdown stops and awaits the worker before Prisma disconnects, so due work never races client teardown.
 
-The seed command requires `SEED_CUSTOMER_EMAIL`, `SEED_CUSTOMER_PASSWORD`, `SEED_CUSTOMER_FIRST_NAME`, and `SEED_CUSTOMER_LAST_NAME`. Optional profile variables are documented in `.env.example`; rerunning the seed updates the matching email without exposing its password hash.
+The seed command requires `SEED_CUSTOMER_EMAIL`, `SEED_CUSTOMER_PASSWORD`, `SEED_CUSTOMER_FIRST_NAME`, and `SEED_CUSTOMER_LAST_NAME`. Optional profile variables are documented in `.env.example`; rerunning the seed updates the matching email without exposing its password hash. It also upserts a non-login fictional recipient, email PayID `harbour.services@example.test`, and fictional BPAY billers `123456` (10-digit reference) and `98765` (8-digit reference). No recipient credential is printed or documented.
 
 ## Account and money rules
 
@@ -38,7 +38,9 @@ The seed command requires `SEED_CUSTOMER_EMAIL`, `SEED_CUSTOMER_PASSWORD`, `SEED
 - Joint creation resolves a different co-owner by normalized email and grants both owners immediate equal visibility, transaction-history access, and transfer rights. There is no invitation or approval step.
 - Transfers between Express Bank accounts are atomic: the service debits, credits, and creates one `Transfer` record in one Prisma transaction. The destination may belong to the same customer or another customer.
 - Transfers cannot overdraw the source or send to the same account. A rejected transfer has no balance or history side effects.
-- Transaction history derives `SENT` or `RECEIVED` from the viewed account and returns the counterparty account number.
+- Payments are immediate AUD operations with an explicit passive review step. Account-number and email PayID payments atomically debit and credit internal accounts and link one `Payment` receipt to one `Transfer`; BPAY conditionally debits only the source and records an outgoing payment.
+- Either joint owner may pay. The actor may not pay any account they own, directly or through PayID. PayIDs are normalized lowercase emails and their mapped account is never returned. BPAY codes and references are numeric, and each configured biller requires an exact reference length.
+- Transaction history derives `SENT` or `RECEIVED` from the viewed account and includes transfer/payment method plus a safe counterparty label. Outgoing PayID and BPAY rows do not expose a mapped destination account.
 - Scheduled transfers are customer-private, one-time instructions. Creating one checks ownership, destination, amount, future time, and current funds without reserving money. At the due time the worker atomically claims it, rechecks the same transfer rules, and either creates a normal transfer/history record as `COMPLETED` or records a side-effect-free `FAILED` result.
 - Cards belong to the authenticated holder even when linked to a joint account. `ACTIVE` cards may be temporarily `LOCKED`, locked cards may be unlocked, and either may be permanently `DISABLED`. Responses expose only `••••` plus four digits. Five deterministic display-only sample purchases are created with every card and never change account balances.
 
@@ -57,6 +59,8 @@ SQLite `CHECK` constraints enforce the three account types, valid `SINGLE`/`JOIN
 | `POST` | `/api/accounts` | Create an AUD account for the authenticated customer. |
 | `POST` | `/api/joint-accounts` | Create one account shared with a different active customer identified by registered email. |
 | `POST` | `/api/transfers` | Atomically transfer funds by destination account number. |
+| `POST` | `/api/payments/resolve` | Validate and safely resolve an immediate payment without writes. |
+| `POST` | `/api/payments` | Re-resolve and confirm an immediate account, PayID, or BPAY payment. |
 | `GET`, `POST` | `/api/scheduled-transfers` | List private schedules or create a one-time future transfer. |
 | `GET`, `POST` | `/api/cards` | List holder-owned cards or open one with five sample transactions. |
 | `GET` | `/api/cards/:cardId` | Get one holder-owned masked card. |
@@ -70,7 +74,7 @@ SQLite `CHECK` constraints enforce the three account types, valid `SINGLE`/`JOIN
 
 Protected routes derive the actor exclusively from the verified `eb_session` cookie. Client path/body identity is not accepted. Account response `customerId` remains creator/legacy metadata; `owners` is the complete safe owner set, and either joint owner is authorized. Missing or invalid authentication is `401`; authenticated cross-owner access and untrusted mutation origins are `403`.
 
-API errors use `{ "error": "Human-readable message" }`. Transfers return `400` for invalid input/self-transfer, `403` for unowned resources, `404` for missing records, and `409` for insufficient funds.
+API errors use `{ "error": "Human-readable message" }`. Payments and transfers return `400` for invalid input/self-payment, `403` for unowned resources or untrusted origin, `404` for missing records, and `409` for insufficient funds.
 
 ## Data model
 
@@ -78,6 +82,8 @@ API errors use `{ "error": "Human-readable message" }`. Transfers return `400` f
 - `Customer.address` remains nullable for migration compatibility, but profile updates require a non-blank address.
 - `Account` holds one unique `EXB-#########` number, ownership mode, primary owner, optional co-owner, product type, optional display name, one shared balance, currency, and timestamps.
 - `Transfer` links source and destination accounts and stores integer cents, an optional description, and creation time.
+- `PayIdDirectoryEntry` maps one active normalized email to an internal account and stores only a safe display name for responses. `BpayBiller` stores a fictional numeric code and reference length rule.
+- `Payment` stores the initiating customer, source, method, amount, optional transfer/directory/biller links, method-specific reference, and immutable safe receipt snapshots.
 - `AuthSession` stores only a unique SHA-256 token hash, customer relation, activity timestamps, and absolute expiry. Raw tokens exist only transiently and in the HttpOnly cookie.
 - `ScheduledTransfer` stores the authenticated creator, resolved account IDs, due instant, processing status, safe terminal reason, and optional resulting transfer.
 - `Card` stores its holder, linked account, internal last four digits and state; `CardTransaction` stores exactly five deterministic samples per newly opened card.
@@ -85,6 +91,7 @@ API errors use `{ "error": "Human-readable message" }`. Transfers return `400` f
 Migration `0002_accounts_and_transfers` adds the account and transfer tables without resetting existing customers. Migration `0003_joint_accounts` preserves account IDs and transfer references while marking existing accounts `SINGLE` and adding the optional co-owner relation.
 Migration `0004_auth_sessions` adds revocable server-side sessions without changing existing customer, account, or transfer data.
 Migration `0005_profile_schedules_and_cards` adds the nullable legacy-compatible address plus scheduled-transfer, card, and card-transaction tables without resetting existing rows.
+Migration `0006_payments` adds PayID directory, BPAY biller, and payment receipt tables with method-shape, amount, reference, and relationship constraints.
 
 The bounded opaque-session and trusted-origin choices follow the [OWASP Session Management Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html), [OWASP REST Security Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/REST_Security_Cheat_Sheet.html), and Node's cryptographic [`randomBytes`](https://nodejs.org/api/crypto.html#cryptorandombytessize-callback) primitive.
 
@@ -97,4 +104,4 @@ npm run prisma:migrate
 npm run seed
 ```
 
-The focused service tests cover customer normalization/hashing/duplicates, account types/configuration/customer status, joint-owner validation and listing, either-owner transfer/history authorization, atomic side effects, and history direction/order.
+The focused service tests cover customer normalization/hashing/duplicates, account types/configuration/customer status, joint-owner validation and listing, either-owner transfer/payment/history authorization, payment resolution secrecy, atomic account/PayID effects, BPAY debit-only behavior, rejected-write guarantees, and history direction/order.

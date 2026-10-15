@@ -74,6 +74,7 @@ describe('Dashboard navigation', () => {
 
     const accountsGroup = screen.getByTestId('dashboard-nav-group-accounts');
     const cardsDestination = screen.getByTestId('dashboard-nav-cards-standalone');
+    const paymentsDestination = screen.getByTestId('dashboard-nav-payments-standalone');
     const transferGroup = screen.getByTestId('dashboard-nav-group-transfer');
     expect(within(accountsGroup).getByRole('heading', { name: 'Accounts' })).toBe(screen.getByTestId('dashboard-nav-group-accounts-label'));
     expect(within(accountsGroup).getByRole('list')).toBeInTheDocument();
@@ -82,12 +83,14 @@ describe('Dashboard navigation', () => {
     expect(within(accountsGroup).queryByTestId('dashboard-nav-cards')).not.toBeInTheDocument();
     expect(within(cardsDestination).getByTestId('dashboard-nav-cards-item')).toContainElement(screen.getByTestId('dashboard-nav-cards'));
     expect(accountsGroup.compareDocumentPosition(cardsDestination) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(cardsDestination.compareDocumentPosition(transferGroup) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(cardsDestination.compareDocumentPosition(paymentsDestination) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(paymentsDestination.compareDocumentPosition(transferGroup) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 
     expect(screen.getByTestId('dashboard-nav-accounts-overview')).toHaveAttribute('href', '/dashboard?view=accounts');
     expect(screen.getByTestId('dashboard-nav-new-account')).toHaveAttribute('href', '/dashboard?view=new-account');
     expect(screen.getByTestId('dashboard-nav-new-joint-account')).toHaveAttribute('href', '/dashboard?view=new-joint-account');
     expect(screen.getByTestId('dashboard-nav-cards')).toHaveAttribute('href', '/dashboard?view=cards');
+    expect(screen.getByTestId('dashboard-nav-payments')).toHaveAttribute('href', '/dashboard?view=payments');
     expect(screen.getByTestId('dashboard-nav-transfer')).toHaveAttribute('href', '/dashboard?view=transfer');
     expect(screen.getByTestId('dashboard-nav-accounts-overview')).toHaveAttribute('aria-current', 'page');
     expect(screen.getByTestId('dashboard-nav-new-account')).not.toHaveAttribute('aria-current');
@@ -302,7 +305,8 @@ describe('Dashboard banking functions', () => {
     expect(await screen.findByTestId('schedule-transfer-message')).toHaveTextContent('Transfer scheduled');
     const body = JSON.parse((fetchMock.mock.calls[1][1] as RequestInit).body as string);
     expect(body).toMatchObject({ sourceAccountId: 'account-1', destinationAccountNumber: 'EXB-000000002', amountCents: 2500 });
-    expect(body.scheduledFor).toMatch(/^2026-11-01T/);
+    const scheduledInstant = new Date(body.scheduledFor);
+    expect([scheduledInstant.getFullYear(), scheduledInstant.getMonth(), scheduledInstant.getDate()]).toEqual([2026, 10, 1]);
     expect(body).not.toHaveProperty('customerId');
   });
 
@@ -331,6 +335,76 @@ describe('Dashboard banking functions', () => {
     fireEvent.keyDown(screen.getByTestId('card-disable-dialog-card-1'), { key: 'Escape' });
     expect(screen.queryByTestId('card-disable-dialog-card-1')).not.toBeInTheDocument();
     expect(screen.getByTestId('card-disable-card-1')).toHaveFocus();
+  });
+
+  it('supports the Payments deep link and switches method-specific fields with owned joint sources', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(response({ accounts }));
+    renderDashboard('/dashboard?view=payments');
+    expect(await screen.findByTestId('dashboard-view-payments')).toBeInTheDocument();
+    expect(screen.getByTestId('dashboard-nav-payments')).toHaveAttribute('aria-current', 'page');
+    expect(screen.getByTestId('payment-source-option-account-2')).toHaveTextContent('Joint');
+    expect(screen.getByTestId('payment-destination-account')).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('payment-method-payid'));
+    expect(screen.getByTestId('payment-payid')).toBeInTheDocument();
+    expect(screen.queryByTestId('payment-destination-account')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('payment-method-bpay'));
+    expect(screen.getByTestId('payment-biller-code')).toBeInTheDocument();
+    expect(screen.getByTestId('payment-customer-reference')).toBeInTheDocument();
+  });
+
+  it('reviews and confirms a bank-account payment in cents, then shows a stable receipt and refreshes history', async () => {
+    const review = { method: 'BANK_ACCOUNT', sourceAccountNumber: 'EXB-000000001', amountCents: 1234, description: 'Invoice', payeeName: 'Harbour Services', destinationAccountNumber: 'EXB-PAYMENTS-001' };
+    const receipt = { ...review, id: 'payment-1', payId: null, billerCode: null, customerReference: null, createdAt: '2026-10-16T00:00:00Z' };
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(response({ accounts }))
+      .mockResolvedValueOnce(response(review))
+      .mockResolvedValueOnce(response(receipt, 201))
+      .mockResolvedValueOnce(response({ accounts }))
+      .mockResolvedValueOnce(response({ transactions: [{ id: 'payment-1', method: 'BANK_ACCOUNT', direction: 'SENT', amountCents: 1234, description: 'Invoice', counterpartyAccountNumber: 'EXB-PAYMENTS-001', counterpartyLabel: 'Harbour Services', customerReference: null, createdAt: receipt.createdAt }] }));
+    renderDashboard('/dashboard?view=payments');
+    await screen.findByTestId('payment-entry-form');
+    fireEvent.change(screen.getByTestId('payment-destination-account'), { target: { value: 'EXB-PAYMENTS-001' } });
+    fireEvent.change(screen.getByTestId('payment-amount'), { target: { value: '12.34' } });
+    fireEvent.change(screen.getByTestId('payment-description'), { target: { value: 'Invoice' } });
+    fireEvent.click(screen.getByTestId('payment-review-submit'));
+    expect(await screen.findByTestId('payment-review')).toBeInTheDocument();
+    expect(screen.getByTestId('payment-review-heading')).toHaveFocus();
+    expect(screen.getByTestId('payment-review-payee')).toHaveTextContent('Harbour Services');
+    expect(screen.getByTestId('payment-review-amount')).toHaveTextContent('$12.34');
+    fireEvent.click(screen.getByTestId('payment-confirm'));
+    expect(await screen.findByTestId('payment-receipt-payment-1')).toBeInTheDocument();
+    expect(screen.getByTestId('payment-receipt-heading')).toHaveFocus();
+    expect(screen.getByTestId('payment-receipt-id')).toHaveTextContent('payment-1');
+    const resolveBody = JSON.parse((fetchMock.mock.calls[1][1] as RequestInit).body as string);
+    const createBody = JSON.parse((fetchMock.mock.calls[2][1] as RequestInit).body as string);
+    expect(resolveBody).toMatchObject({ method: 'BANK_ACCOUNT', sourceAccountId: 'account-1', destinationAccountNumber: 'EXB-PAYMENTS-001', amountCents: 1234 });
+    expect(createBody).toEqual(resolveBody);
+    expect(createBody).not.toHaveProperty('customerId');
+    expect(fetchMock.mock.calls[4][0]).toContain('/api/accounts/account-1/transactions');
+  });
+
+  it('keeps PayID review secrecy and preserves BPAY input after an accessible validation error', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(response({ accounts }))
+      .mockResolvedValueOnce(response({ method: 'PAYID', sourceAccountNumber: 'EXB-000000001', amountCents: 500, description: null, payeeName: 'Safe Recipient', payId: 'recipient@example.com' }))
+      .mockResolvedValueOnce(response({ error: 'Customer reference must be exactly 10 digits for this biller.' }, 400));
+    renderDashboard('/dashboard?view=payments');
+    await screen.findByTestId('payment-entry-form');
+    fireEvent.click(screen.getByTestId('payment-method-payid'));
+    fireEvent.change(screen.getByTestId('payment-payid'), { target: { value: 'RECIPIENT@example.com' } });
+    fireEvent.change(screen.getByTestId('payment-amount'), { target: { value: '5.00' } });
+    fireEvent.click(screen.getByTestId('payment-review-submit'));
+    expect(await screen.findByTestId('payment-review')).toHaveTextContent('Safe Recipient');
+    expect(screen.getByTestId('payment-review')).not.toHaveTextContent('EXB-PAYMENTS-001');
+    fireEvent.click(screen.getByTestId('payment-review-edit'));
+    fireEvent.click(screen.getByTestId('payment-method-bpay'));
+    fireEvent.change(screen.getByTestId('payment-biller-code'), { target: { value: '123456' } });
+    fireEvent.change(screen.getByTestId('payment-customer-reference'), { target: { value: '123' } });
+    fireEvent.click(screen.getByTestId('payment-review-submit'));
+    expect(await screen.findByRole('alert')).toHaveTextContent('exactly 10 digits');
+    expect(screen.getByTestId('payment-biller-code')).toHaveValue('123456');
+    expect(screen.getByTestId('payment-customer-reference')).toHaveValue('123');
+    expect(JSON.parse((fetchMock.mock.calls[1][1] as RequestInit).body as string)).not.toHaveProperty('customerId');
   });
 
   it('clears the session on logout', async () => {
