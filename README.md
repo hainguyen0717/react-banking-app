@@ -42,6 +42,7 @@ The dashboard uses deep-linkable function navigation. Cards and Payments are sta
 - `/dashboard?view=schedule-transfer` — one-time future transfer form with a picker-only local date and time.
 - `/dashboard?view=scheduled-transfers` — customer-private schedule statuses.
 - `/dashboard?view=profile` — edit first name, last name, and address.
+- `/dashboard?view=delay-simulator` — configure an inclusive 0–60 second delay range for API calls, UI navigation, or both.
 
 Missing or invalid `view` values show the accounts overview. A transfer can target any valid Express Bank account number, including an account owned by another customer.
 
@@ -58,6 +59,7 @@ Missing or invalid `view` values show the accounts overview. A transfer can targ
 - `GET|POST /api/cards`, `GET /api/cards/:cardId`, and card action endpoints manage masked holder-owned demo cards. Each newly opened card has exactly five display-only sample transactions.
 - `GET /api/accounts/:accountId/transactions` returns newest-first `SENT`/`RECEIVED` history.
 - `GET /api/health` checks database health; `GET /health` redirects to it.
+- `GET|PUT /api/test-controls/delay` reads or replaces the shared delay range; `POST /api/test-controls/delay/sample` reserves one short-lived API-delay sample for the next request.
 - `GET /docs/` serves a browser-friendly Swagger UI; `GET /docs` redirects to it, and `GET /docs/openapi.json` keeps serving the active OpenAPI 3.0 JSON contract.
 
 Open `/docs/` on the configured backend origin; with the copied development environment, that is [http://localhost:4000/docs/](http://localhost:4000/docs/). (`server.js` falls back to port `3001` only when `PORT` is unset.) The UI uses locally bundled open-source assets and the existing JSON contract, so it requires no paid service or CDN. Its standard **Try it out** flow sends same-origin cookies: log in through `POST /api/login`, then the browser stores and sends the HttpOnly session cookie automatically without exposing or preloading the token in the page.

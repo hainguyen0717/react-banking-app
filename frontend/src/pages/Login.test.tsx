@@ -28,11 +28,13 @@ describe('CustomerLogin', () => {
   });
 
   it('stores only the returned customer profile and navigates to the dashboard', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
-      ok: true,
-      status: 200,
-      json: async () => ({ id: 'customer-1', email: 'ada@example.com', firstName: 'Ada', lastName: 'Lovelace' }),
-    } as Response);
+    vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ ticket: 'login-ticket', sampledSeconds: 0 }) } as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ id: 'customer-1', email: 'ada@example.com', firstName: 'Ada', lastName: 'Lovelace' }),
+      } as Response);
 
     render(
       loginPage(
@@ -55,5 +57,23 @@ describe('CustomerLogin', () => {
       expect.objectContaining({ credentials: 'include' }),
     ));
     expect(localStorage.getItem('express-bank-customer')).toBeNull();
+  });
+
+  it('blocks the styled login card and shows the sampled countdown while login is delayed', async () => {
+    let resolveLogin!: (response: Response) => void;
+    vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ ticket: 'login-ticket', sampledSeconds: 2 }) } as Response)
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveLogin = resolve; }));
+    render(loginPage(<MemoryRouter><CustomerLogin /></MemoryRouter>));
+    fireEvent.change(screen.getByTestId('customer-login-username'), { target: { value: 'ada@example.com' } });
+    fireEvent.change(screen.getByTestId('customer-login-password'), { target: { value: 'safe-pass' } });
+    fireEvent.click(screen.getByTestId('customer-login-submit'));
+
+    expect(await screen.findByTestId('login-delay-blocker')).toHaveAttribute('role', 'dialog');
+    expect(screen.getByTestId('login-delay-blocker-message')).toHaveTextContent('2 seconds remaining');
+    expect(screen.getByTestId('customer-login-card-content')).toHaveAttribute('inert');
+    resolveLogin({ ok: false, status: 401, json: async () => ({ error: 'Invalid credentials.' }) } as Response);
+    expect(await screen.findByTestId('customer-login-error')).toHaveTextContent('Invalid credentials');
+    expect(screen.queryByTestId('login-delay-blocker')).not.toBeInTheDocument();
   });
 });

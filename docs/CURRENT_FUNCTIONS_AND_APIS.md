@@ -25,7 +25,7 @@ API paths are case-sensitive. Protected APIs derive identity only from the verif
 | 15 | Schedule a transfer | Creates a private one-time future transfer from a picker-only local date/time. Funds are checked but not reserved; due processing rechecks rules and records `COMPLETED` or side-effect-free `FAILED`. | `GET\|POST /api/scheduled-transfers`, schedule dashboard views | **Implemented** |
 | 16 | Manage demo debit cards | Opens holder-specific cards on personally or jointly owned accounts, creates exactly five display-only samples, and supports temporary lock/unlock or permanent disable. | Card APIs, `/dashboard?view=cards` | **Implemented** |
 | 17 | Make an immediate payment | Resolves and reviews an Express account number, email PayID, or fictional BPAY biller before final confirmation. Account/PayID payments update both internal sides; BPAY debits the source only. Joint owners may pay, while actor-owned destinations, invalid references, and overdrafts are side-effect-free failures. | `POST /api/payments/resolve`, `POST /api/payments`, `/dashboard?view=payments` | **Implemented** |
-| 18 | Configure test delay | Reads and replaces one shared 0–60 second integer delay with `API`, `UI`, or `BOTH` scope. The banner shows the active setting and offers a responsive reset. UI-inclusive scope delays dashboard destination changes only; API-backed actions rely only on server delay. | `GET\|PUT /api/test-controls/delay`, `/dashboard?view=delay-simulator` | **Implemented** |
+| 18 | Configure test delay | Reads and replaces a shared inclusive 0–60 second whole-number range with `API`, `UI`, or `BOTH` scope. Each eligible event samples independently; equal bounds are fixed. The banner shows the active setting and offers a responsive reset. UI-inclusive scope delays dashboard destination changes only; API-backed actions rely on their reserved server sample. | `GET\|PUT /api/test-controls/delay`, `POST /api/test-controls/delay/sample`, `/dashboard?view=delay-simulator` | **Implemented** |
 
 ## Operational functions
 
@@ -38,7 +38,7 @@ API paths are case-sensitive. Protected APIs derive identity only from the verif
 | 5 | Log API requests | Logs method, path, response status, and duration without query-string values. | Applies to all active APIs. | **Implemented** |
 | 6 | Shut down safely | Closes the server and disconnects Prisma on `SIGINT`/`SIGTERM`. | Process lifecycle behavior. | **Implemented** |
 | 7 | Process due transfers | Runs at startup and on a configurable non-overlapping interval, atomically claims due pending schedules, and stops before Prisma disconnect. | `SCHEDULED_TRANSFER_POLL_INTERVAL_MS` | **Implemented** |
-| 8 | Simulate slow APIs and UI navigation | Stores one in-memory delay per server process, defaulting to 0 seconds with `BOTH` scope. Ordinary API requests capture API-inclusive delay at entry; exact control endpoints, docs, legacy health redirect, and background work remain responsive. Restart restores the default. | Delay control API and dashboard Test Controls | **Implemented** |
+| 8 | Simulate slow APIs and UI navigation | Stores one in-memory inclusive delay range per server process, defaulting to `0`–`0` seconds with `BOTH` scope. The UI reserves a short-lived single-use API sample so its countdown matches the server response delay; unticketed scripts sample directly at entry. Exact control endpoints, docs, legacy health redirect, and background work remain responsive. Restart restores the default. | Delay control API and dashboard Test Controls | **Implemented** |
 
 ## Implemented API summary
 
@@ -60,7 +60,8 @@ API paths are case-sensitive. Protected APIs derive identity only from the verif
 | `GET` | `/api/cards/:cardId` | `200` holder-owned masked card | `401` authentication, `403` foreign card, `404` missing card |
 | `POST` | `/api/cards/:cardId/lock`, `/unlock`, `/disable` | `200` updated masked card | `401`, `403`, `404`, `409` invalid/repeated transition |
 | `GET` | `/api/accounts/:accountId/transactions` | `200` `{ "transactions": [...] }` | `401` authentication required, `403` ownership, `404` account missing |
-| `GET`, `PUT` | `/api/test-controls/delay` | `200` complete `{ "durationSeconds", "scope" }` setting | `400` missing/fractional/out-of-range/unknown payload, `403` untrusted PUT origin |
+| `GET`, `PUT` | `/api/test-controls/delay` | `200` complete `{ "minSeconds", "maxSeconds", "scope" }` setting | `400` missing/fractional/unordered/out-of-range/unknown payload, `403` untrusted PUT origin |
+| `POST` | `/api/test-controls/delay/sample` | `200` non-cacheable `{ "ticket", "sampledSeconds" }` reservation | `403` untrusted origin |
 | `GET` | `/api/health` | `200` `{ "status": "ok" }` | `503` database unavailable |
 | `GET` | `/health` | `308` redirect | None defined |
 | `GET` | `/docs`, `/docs/` | `308` canonical redirect or `200` Swagger UI | None defined |
@@ -68,7 +69,7 @@ API paths are case-sensitive. Protected APIs derive identity only from the verif
 
 Swagger **Try it out** uses the API's serving origin and browser-managed HttpOnly session cookie. Login sets the cookie; the UI does not read or preload it. Mutating calls still require an exact configured frontend origin or an exact match to the API request's protocol, host, and port. Credentialed CORS is not broadened.
 
-The delay control is intentionally process-local and public for deterministic API/UI test scripts. PUT requires both fields and rejects invalid input without changing the active setting. Reset writes 0 seconds while retaining the active scope. External changes appear in the dashboard after reload or explicit refresh; there is no polling.
+The delay control is intentionally process-local and public for deterministic API/UI test scripts. PUT requires all three fields and rejects invalid input without changing the active setting. Reset writes `0`–`0` seconds while retaining the active scope. Each eligible event independently samples an inclusive whole-number value. A sampled ticket is opaque, short-lived, and single-use; send it as `X-Test-Delay-Ticket` and inspect `X-Test-Delay-Seconds` on the ordinary API response. Invalid, expired, or replayed tickets return `400`. External setting changes appear in the dashboard after reload or explicit refresh; there is no polling.
 
 ## Money and history contract
 

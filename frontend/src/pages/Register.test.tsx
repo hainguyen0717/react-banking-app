@@ -9,11 +9,13 @@ afterEach(() => {
 
 describe('Register', () => {
   it('submits customer details and returns to login with a success state', async () => {
-    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
-      ok: true,
-      status: 201,
-      json: async () => ({ id: 'customer-1', email: 'ada@example.com', firstName: 'Ada', lastName: 'Lovelace' }),
-    } as Response);
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ ticket: 'register-ticket', sampledSeconds: 0 }) } as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 201,
+        json: async () => ({ id: 'customer-1', email: 'ada@example.com', firstName: 'Ada', lastName: 'Lovelace' }),
+      } as Response);
 
     render(
       <MemoryRouter initialEntries={['/register']}>
@@ -31,7 +33,7 @@ describe('Register', () => {
     fireEvent.click(screen.getByTestId('customer-create-submit'));
 
     expect(await screen.findByTestId('login-route')).toBeInTheDocument();
-    const request = fetchMock.mock.calls[0];
+    const request = fetchMock.mock.calls[1];
     expect(request[0]).toContain('/api/customers');
     expect(JSON.parse((request[1] as RequestInit).body as string)).toEqual({
       firstName: 'Ada', lastName: 'Lovelace', email: 'ada@example.com', password: 'safe-pass',
@@ -39,11 +41,13 @@ describe('Register', () => {
   });
 
   it('shows the API error in the stable customer-create error locator', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
-      ok: false,
-      status: 409,
-      json: async () => ({ error: { code: 'EMAIL_ALREADY_EXISTS', message: 'A customer with this email already exists.' } }),
-    } as Response);
+    vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ ticket: 'register-ticket', sampledSeconds: 0 }) } as Response)
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 409,
+        json: async () => ({ error: { code: 'EMAIL_ALREADY_EXISTS', message: 'A customer with this email already exists.' } }),
+      } as Response);
 
     render(<MemoryRouter><Register /></MemoryRouter>);
     fireEvent.change(screen.getByTestId('customer-create-first-name'), { target: { value: 'Ada' } });

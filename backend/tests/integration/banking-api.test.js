@@ -14,6 +14,7 @@ const {
 } = require('node:test');
 const { PrismaClient } = require('@prisma/client');
 const { createApp } = require('../../src/createApp');
+const { createDelayService } = require('../../src/services/delayService');
 const { createScheduledTransferService } = require('../../src/services/scheduledTransferService');
 const { createCardService } = require('../../src/services/cardService');
 const expectedOpenApiDocument = require('../../src/docs/openapi.json');
@@ -277,10 +278,10 @@ describe('authenticated banking API against isolated SQLite', { concurrency: fal
 
     const resetDelay = await client().request('/api/test-controls/delay', {
       method: 'PUT',
-      body: { durationSeconds: 0, scope: 'BOTH' },
+      body: { minSeconds: 0, maxSeconds: 0, scope: 'BOTH' },
     });
     assertJson(resetDelay, 200);
-    assert.deepEqual(resetDelay.body, { durationSeconds: 0, scope: 'BOTH' });
+    assert.deepEqual(resetDelay.body, { minSeconds: 0, maxSeconds: 0, scope: 'BOTH' });
   });
 
   after(async () => {
@@ -364,6 +365,7 @@ describe('authenticated banking API against isolated SQLite', { concurrency: fal
 
     for (const route of [
       '/api/test-controls/delay',
+      '/api/test-controls/delay/sample',
       '/api/session',
       '/api/logout',
       '/api/accounts',
@@ -393,8 +395,10 @@ describe('authenticated banking API against isolated SQLite', { concurrency: fal
     assert.deepEqual(documentation.body.paths['/api/customers'].post.security, []);
     assert.deepEqual(documentation.body.paths['/api/test-controls/delay'].get.security, []);
     assert.deepEqual(documentation.body.paths['/api/test-controls/delay'].put.security, []);
+    assert.deepEqual(documentation.body.paths['/api/test-controls/delay/sample'].post.security, []);
     assert.ok(documentation.body.paths['/api/test-controls/delay'].put.responses['400']);
     assert.ok(documentation.body.paths['/api/test-controls/delay'].put.responses['403']);
+    assert.ok(documentation.body.paths['/api/test-controls/delay/sample'].post.responses['403']);
     assert.deepEqual(documentation.body.paths['/api/accounts'].get.security, [{ cookieAuth: [] }]);
     assert.deepEqual(documentation.body.paths['/api/transfers'].post.security, [{ cookieAuth: [] }]);
     assert.deepEqual(documentation.body.paths['/api/payments/resolve'].post.security, [{ cookieAuth: [] }]);
@@ -441,6 +445,7 @@ describe('authenticated banking API against isolated SQLite', { concurrency: fal
       'CardTransaction',
       'Card',
       'DelaySetting',
+      'DelaySample',
     ]) assert.ok(documentation.body.components.schemas[schema], `OpenAPI is missing ${schema}`);
 
     assert.deepEqual({
@@ -457,7 +462,7 @@ describe('authenticated banking API against isolated SQLite', { concurrency: fal
     }, beforeState);
   });
 
-  test('delay controls default per app instance and expose shared process-local state without database writes', async () => {
+  test('delay ranges default per app, accept fixed and variable bounds, and are shared without database writes', async () => {
     const firstClient = client();
     const secondClient = client();
     const beforeState = {
@@ -467,20 +472,22 @@ describe('authenticated banking API against isolated SQLite', { concurrency: fal
       transfers: await prisma.transfer.count(),
     };
 
-    const initial = await firstClient.request('/api/test-controls/delay');
+    const initial = await firstClient.request('/api/test-controls/delay', { origin: 'https://foreign.example' });
     assertJson(initial, 200);
-    assert.deepEqual(initial.body, { durationSeconds: 0, scope: 'BOTH' });
+    assert.deepEqual(initial.body, { minSeconds: 0, maxSeconds: 0, scope: 'BOTH' });
 
-    const updated = await firstClient.request('/api/test-controls/delay', {
-      method: 'PUT',
-      body: { durationSeconds: 60, scope: 'UI' },
-    });
-    assertJson(updated, 200);
-    assert.deepEqual(updated.body, { durationSeconds: 60, scope: 'UI' });
+    for (const setting of [
+      { minSeconds: 2, maxSeconds: 5, scope: 'API' },
+      { minSeconds: 60, maxSeconds: 60, scope: 'UI' },
+    ]) {
+      const updated = await firstClient.request('/api/test-controls/delay', { method: 'PUT', body: setting });
+      assertJson(updated, 200);
+      assert.deepEqual(updated.body, setting);
+      const shared = await secondClient.request('/api/test-controls/delay');
+      assertJson(shared, 200);
+      assert.deepEqual(shared.body, setting);
+    }
 
-    const shared = await secondClient.request('/api/test-controls/delay');
-    assertJson(shared, 200);
-    assert.deepEqual(shared.body, updated.body);
     assert.deepEqual({
       customers: await prisma.customer.count(),
       sessions: await prisma.authSession.count(),
@@ -494,28 +501,29 @@ describe('authenticated banking API against isolated SQLite', { concurrency: fal
       const freshClient = createHttpClient(() => `http://127.0.0.1:${address.port}`);
       const freshDefault = await freshClient.request('/api/test-controls/delay');
       assertJson(freshDefault, 200);
-      assert.deepEqual(freshDefault.body, { durationSeconds: 0, scope: 'BOTH' });
+      assert.deepEqual(freshDefault.body, { minSeconds: 0, maxSeconds: 0, scope: 'BOTH' });
     } finally {
       await stopServer(freshServer);
     }
   });
 
-  test('delay updates require a trusted Origin and reject invalid full payloads atomically', async () => {
+  test('range updates and samples require a trusted Origin and invalid settings are rejected atomically', async () => {
     const controlClient = client();
     const configured = await controlClient.request('/api/test-controls/delay', {
       method: 'PUT',
-      body: { durationSeconds: 1, scope: 'UI' },
+      body: { minSeconds: 1, maxSeconds: 3, scope: 'UI' },
     });
     assertJson(configured, 200);
 
     for (const origin of [null, 'https://foreign.example', 'http://localhost:5173.evil.example']) {
-      const rejected = await controlClient.request('/api/test-controls/delay', {
-        method: 'PUT',
-        origin,
-        body: { durationSeconds: 0, scope: 'BOTH' },
-      });
-      assertJson(rejected, 403);
-      assert.deepEqual(rejected.body, { error: 'Trusted Origin required.' });
+      for (const request of [
+        { path: '/api/test-controls/delay', method: 'PUT', body: { minSeconds: 0, maxSeconds: 0, scope: 'BOTH' } },
+        { path: '/api/test-controls/delay/sample', method: 'POST' },
+      ]) {
+        const rejected = await controlClient.request(request.path, { ...request, origin });
+        assertJson(rejected, 403);
+        assert.deepEqual(rejected.body, { error: 'Trusted Origin required.' });
+      }
       assert.deepEqual((await controlClient.request('/api/test-controls/delay')).body, configured.body);
     }
 
@@ -525,22 +533,23 @@ describe('authenticated banking API against isolated SQLite', { concurrency: fal
       1,
       'invalid',
       {},
-      { durationSeconds: 0 },
-      { scope: 'API' },
-      { durationSeconds: -1, scope: 'API' },
-      { durationSeconds: 61, scope: 'API' },
-      { durationSeconds: 0.5, scope: 'API' },
-      { durationSeconds: '1', scope: 'API' },
-      { durationSeconds: 1, scope: 'api' },
-      { durationSeconds: 1, scope: 'API', extra: true },
+      { minSeconds: 0, maxSeconds: 0 },
+      { minSeconds: 0, scope: 'API' },
+      { maxSeconds: 0, scope: 'API' },
+      { minSeconds: -1, maxSeconds: 0, scope: 'API' },
+      { minSeconds: 0, maxSeconds: 61, scope: 'API' },
+      { minSeconds: 2, maxSeconds: 1, scope: 'API' },
+      { minSeconds: 0.5, maxSeconds: 1, scope: 'API' },
+      { minSeconds: 0, maxSeconds: 1.5, scope: 'API' },
+      { minSeconds: '0', maxSeconds: 1, scope: 'API' },
+      { minSeconds: 0, maxSeconds: '1', scope: 'API' },
+      { minSeconds: 0, maxSeconds: 1, scope: 'api' },
+      { minSeconds: 0, maxSeconds: 1, scope: 'API', extra: true },
     ]) {
-      const rejected = await controlClient.request('/api/test-controls/delay', {
-        method: 'PUT',
-        body,
-      });
+      const rejected = await controlClient.request('/api/test-controls/delay', { method: 'PUT', body });
       assertJson(rejected, 400);
       assert.deepEqual(rejected.body, {
-        error: 'Provide exactly durationSeconds as an integer from 0 to 60 and scope as API, UI, or BOTH.',
+        error: 'Provide exactly minSeconds and maxSeconds as integers from 0 to 60, with minSeconds no greater than maxSeconds, and scope as API, UI, or BOTH.',
       });
       assert.deepEqual((await controlClient.request('/api/test-controls/delay')).body, configured.body);
     }
@@ -548,17 +557,46 @@ describe('authenticated banking API against isolated SQLite', { concurrency: fal
     const malformedResponse = await fetch(`${baseUrl}/api/test-controls/delay`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json', Origin: TRUSTED_ORIGIN },
-      body: '{"durationSeconds":1,',
+      body: '{"minSeconds":1,',
     });
     assert.equal(malformedResponse.status, 400);
     assert.match(malformedResponse.headers.get('content-type') ?? '', /^application\/json\b/);
     assert.deepEqual(await malformedResponse.json(), {
-      error: 'Provide exactly durationSeconds as an integer from 0 to 60 and scope as API, UI, or BOTH.',
+      error: 'Provide exactly minSeconds and maxSeconds as integers from 0 to 60, with minSeconds no greater than maxSeconds, and scope as API, UI, or BOTH.',
     });
     assert.deepEqual((await controlClient.request('/api/test-controls/delay')).body, configured.body);
   });
 
-  test('UI and zero scopes keep APIs immediate while API and BOTH preserve delayed success and error contracts', async () => {
+  test('sample control is responsive, non-cacheable, in range, and passive', async () => {
+    const controlClient = client();
+    const setting = { minSeconds: 2, maxSeconds: 5, scope: 'API' };
+    assertJson(await controlClient.request('/api/test-controls/delay', { method: 'PUT', body: setting }), 200);
+    const beforeState = {
+      customers: await prisma.customer.count(),
+      sessions: await prisma.authSession.count(),
+      accounts: await prisma.account.count(),
+      transfers: await prisma.transfer.count(),
+    };
+
+    const startedAt = process.hrtime.bigint();
+    const sampled = await controlClient.request('/api/test-controls/delay/sample', { method: 'POST' });
+    const elapsedMs = Number(process.hrtime.bigint() - startedAt) / 1_000_000;
+    assertJson(sampled, 200);
+    assert.match(sampled.response.headers.get('cache-control') ?? '', /(?:^|,)\s*no-store\s*(?:,|$)/);
+    assert.match(sampled.body.ticket, /^[A-Za-z0-9._~-]+$/);
+    assert.ok(Number.isInteger(sampled.body.sampledSeconds));
+    assert.ok(sampled.body.sampledSeconds >= 2 && sampled.body.sampledSeconds <= 5);
+    assert.ok(elapsedMs < 750, `sample control was delayed by ${elapsedMs} ms`);
+    assert.deepEqual((await controlClient.request('/api/test-controls/delay')).body, setting);
+    assert.deepEqual({
+      customers: await prisma.customer.count(),
+      sessions: await prisma.authSession.count(),
+      accounts: await prisma.account.count(),
+      transfers: await prisma.transfer.count(),
+    }, beforeState);
+  });
+
+  test('UI and zero ranges are immediate while unticketed API and BOTH requests expose fixed applied delays', async () => {
     const controlClient = client();
 
     async function configure(body) {
@@ -574,88 +612,193 @@ describe('authenticated banking API against isolated SQLite', { concurrency: fal
       return { ...result, elapsedMs };
     }
 
-    await configure({ durationSeconds: 1, scope: 'UI' });
+    await configure({ minSeconds: 1, maxSeconds: 1, scope: 'UI' });
     const uiScopeHealth = await timedRequest(controlClient, '/api/health');
     assertJson(uiScopeHealth, 200);
-    assert.deepEqual(uiScopeHealth.body, { status: 'ok' });
+    assert.equal(uiScopeHealth.response.headers.get('x-test-delay-seconds'), '0');
     assert.ok(uiScopeHealth.elapsedMs < 750, `UI scope unexpectedly delayed the API by ${uiScopeHealth.elapsedMs} ms`);
 
-    await configure({ durationSeconds: 0, scope: 'API' });
+    await configure({ minSeconds: 0, maxSeconds: 0, scope: 'BOTH' });
     const zeroDelayHealth = await timedRequest(controlClient, '/api/health');
     assertJson(zeroDelayHealth, 200);
-    assert.deepEqual(zeroDelayHealth.body, { status: 'ok' });
-    assert.ok(zeroDelayHealth.elapsedMs < 750, `zero delay took ${zeroDelayHealth.elapsedMs} ms`);
+    assert.equal(zeroDelayHealth.response.headers.get('x-test-delay-seconds'), '0');
+    assert.ok(zeroDelayHealth.elapsedMs < 750, `zero range took ${zeroDelayHealth.elapsedMs} ms`);
 
-    await configure({ durationSeconds: 1, scope: 'API' });
+    await configure({ minSeconds: 1, maxSeconds: 1, scope: 'API' });
     const docs = await timedRequest(controlClient, '/docs/openapi.json');
     assertJson(docs, 200);
-    assert.equal(docs.body.openapi, '3.0.3');
+    assert.equal(docs.response.headers.get('x-test-delay-seconds'), null);
     assert.ok(docs.elapsedMs < 750, `API delay leaked into docs by ${docs.elapsedMs} ms`);
 
     const legacyHealth = await timedRequest(controlClient, '/health', { redirect: 'manual' });
     assert.equal(legacyHealth.response.status, 308);
     assert.equal(legacyHealth.response.headers.get('location'), '/api/health');
+    assert.equal(legacyHealth.response.headers.get('x-test-delay-seconds'), null);
     assert.ok(legacyHealth.elapsedMs < 750, `API delay leaked into legacy health by ${legacyHealth.elapsedMs} ms`);
 
     const delayedSuccess = await timedRequest(controlClient, '/api/health');
     assertJson(delayedSuccess, 200);
     assert.deepEqual(delayedSuccess.body, { status: 'ok' });
+    assert.equal(delayedSuccess.response.headers.get('x-test-delay-seconds'), '1');
     assert.ok(delayedSuccess.elapsedMs >= 850, `API success returned after only ${delayedSuccess.elapsedMs} ms`);
 
-    await configure({ durationSeconds: 1, scope: 'BOTH' });
+    await configure({ minSeconds: 1, maxSeconds: 1, scope: 'BOTH' });
     const delayedError = await timedRequest(client(), '/api/accounts');
     assertJson(delayedError, 401);
     assert.deepEqual(delayedError.body, { error: 'Authentication required.' });
+    assert.equal(delayedError.response.headers.get('x-test-delay-seconds'), '1');
     assert.ok(delayedError.elapsedMs >= 850, `BOTH error returned after only ${delayedError.elapsedMs} ms`);
   });
 
-  test('controls remain responsive and an in-flight banking response keeps its captured delay after reset', async () => {
-    const actor = await createAuthenticatedCustomer({ suffix: 'captured-delay' });
-    const configured = await client().request('/api/test-controls/delay', {
-      method: 'PUT',
-      body: { durationSeconds: 1, scope: 'API' },
-    });
-    assertJson(configured, 200);
+  test('a valid ticket applies its exact delay once and controls stay responsive after an in-flight reset', async () => {
+    const actor = await createAuthenticatedCustomer({ suffix: 'ticketed-captured-delay' });
+    const controlClient = client();
+    const fixedDelay = { minSeconds: 1, maxSeconds: 1, scope: 'API' };
+    assertJson(await controlClient.request('/api/test-controls/delay', { method: 'PUT', body: fixedDelay }), 200);
+
+    const sampleStartedAt = process.hrtime.bigint();
+    const sample = await controlClient.request('/api/test-controls/delay/sample', { method: 'POST' });
+    const sampleElapsedMs = Number(process.hrtime.bigint() - sampleStartedAt) / 1_000_000;
+    assertJson(sample, 200);
+    assert.deepEqual(Object.keys(sample.body).sort(), ['sampledSeconds', 'ticket']);
+    assert.equal(sample.body.sampledSeconds, 1);
+    assert.match(sample.response.headers.get('cache-control') ?? '', /no-store/);
+    assert.ok(sampleElapsedMs < 750, `sample control was delayed by ${sampleElapsedMs} ms`);
 
     const requestStartedAt = process.hrtime.bigint();
     let accountSettled = false;
     const pendingAccount = actor.client.request('/api/accounts', {
       method: 'POST',
-      body: { type: 'EVERYDAY', displayName: 'Delayed account' },
+      headers: { 'X-Test-Delay-Ticket': sample.body.ticket },
+      body: { type: 'EVERYDAY', displayName: 'Ticketed delayed account' },
     }).finally(() => {
       accountSettled = true;
     });
 
     await new Promise((resolve) => setTimeout(resolve, 100));
     const resetStartedAt = process.hrtime.bigint();
-    const reset = await client().request('/api/test-controls/delay', {
+    const reset = await controlClient.request('/api/test-controls/delay', {
       method: 'PUT',
-      body: { durationSeconds: 0, scope: 'BOTH' },
+      body: { minSeconds: 0, maxSeconds: 0, scope: 'BOTH' },
     });
     const resetElapsedMs = Number(process.hrtime.bigint() - resetStartedAt) / 1_000_000;
     assertJson(reset, 200);
-    assert.deepEqual(reset.body, { durationSeconds: 0, scope: 'BOTH' });
+    assert.deepEqual(reset.body, { minSeconds: 0, maxSeconds: 0, scope: 'BOTH' });
     assert.ok(resetElapsedMs < 750, `control update was delayed by ${resetElapsedMs} ms`);
-    assert.equal(accountSettled, false, 'ordinary API response completed before its captured delay elapsed');
+    assert.equal(accountSettled, false, 'ticketed API response completed before its captured delay elapsed');
 
-    const current = await client().request('/api/test-controls/delay');
+    const current = await controlClient.request('/api/test-controls/delay');
     assertJson(current, 200);
     assert.deepEqual(current.body, reset.body);
-    assert.equal(accountSettled, false, 'control read waited for the in-flight API response');
+    const zeroSample = await controlClient.request('/api/test-controls/delay/sample', { method: 'POST' });
+    assertJson(zeroSample, 200);
+    assert.equal(zeroSample.body.sampledSeconds, 0);
+    assert.equal(accountSettled, false, 'control requests waited for the in-flight API response');
 
     const account = await pendingAccount;
     const requestElapsedMs = Number(process.hrtime.bigint() - requestStartedAt) / 1_000_000;
     assertJson(account, 201);
+    assert.equal(account.response.headers.get('x-test-delay-seconds'), '1');
     assert.equal(account.body.customerId, actor.customer.id);
-    assert.equal(account.body.displayName, 'Delayed account');
-    assert.ok(requestElapsedMs >= 850, `captured delay was reset after only ${requestElapsedMs} ms`);
-    assert.equal(await prisma.account.count({
-      where: { id: account.body.id, customerId: actor.customer.id },
-    }), 1);
+    assert.ok(requestElapsedMs >= 850, `captured ticket delay was reset after only ${requestElapsedMs} ms`);
+    assert.equal(await prisma.account.count({ where: { customerId: actor.customer.id } }), 1);
 
-    const immediateAccounts = await actor.client.request('/api/accounts');
-    assertJson(immediateAccounts, 200);
-    assert.deepEqual(immediateAccounts.body.accounts.map(({ id }) => id), [account.body.id]);
+    for (const ticket of [sample.body.ticket, 'unknown-ticket']) {
+      const rejected = await actor.client.request('/api/accounts', {
+        method: 'POST',
+        headers: { 'X-Test-Delay-Ticket': ticket },
+        body: { type: 'SAVINGS', displayName: 'Must not persist' },
+      });
+      assertJson(rejected, 400);
+      assert.equal(rejected.response.headers.get('x-test-delay-seconds'), '0');
+      assert.deepEqual(rejected.body, { error: 'Invalid or expired test delay ticket.' });
+      assert.equal(await prisma.account.count({ where: { customerId: actor.customer.id } }), 1);
+    }
+
+    const anonymousWithTicket = await client().request('/api/accounts', {
+      headers: { 'X-Test-Delay-Ticket': zeroSample.body.ticket },
+    });
+    assertJson(anonymousWithTicket, 401);
+    assert.equal(anonymousWithTicket.response.headers.get('x-test-delay-seconds'), '0');
+    assert.deepEqual(anonymousWithTicket.body, { error: 'Authentication required.' });
+  });
+
+  test('expired delay tickets are rejected before a banking route can create side effects', async () => {
+    const expiringDelayService = createDelayService(undefined, { ticketTtlMs: 25 });
+    const expiringServer = await startServer(createApp({
+      prisma,
+      logger: createTestLogger(),
+      delayService: expiringDelayService,
+    }));
+    try {
+      const address = expiringServer.address();
+      const expiringClient = createHttpClient(() => `http://127.0.0.1:${address.port}`);
+      const sample = await expiringClient.request('/api/test-controls/delay/sample', { method: 'POST' });
+      assertJson(sample, 200);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      const rejected = await expiringClient.request('/api/customers', {
+        method: 'POST',
+        headers: { 'X-Test-Delay-Ticket': sample.body.ticket },
+        body: {
+          email: 'expired-ticket@example.test',
+          password: TEST_PASSWORD,
+          firstName: 'Expired',
+          lastName: 'Ticket',
+        },
+      });
+      assertJson(rejected, 400);
+      assert.equal(rejected.response.headers.get('x-test-delay-seconds'), '0');
+      assert.deepEqual(rejected.body, { error: 'Invalid or expired test delay ticket.' });
+      assert.equal(await prisma.customer.count(), 0);
+    } finally {
+      await stopServer(expiringServer);
+    }
+  });
+
+  test('delay tickets do not authenticate and preserve login and logout response contracts', async () => {
+    const created = await createCustomer({ suffix: 'ticket-auth-contracts' });
+    const controlClient = client();
+    async function reserveTicket() {
+      const sampled = await controlClient.request('/api/test-controls/delay/sample', { method: 'POST' });
+      assertJson(sampled, 200);
+      assert.equal(sampled.body.sampledSeconds, 0);
+      return sampled.body.ticket;
+    }
+
+    const anonymous = await client().request('/api/accounts', {
+      headers: { 'X-Test-Delay-Ticket': await reserveTicket() },
+    });
+    assertJson(anonymous, 401);
+    assert.deepEqual(anonymous.body, { error: 'Authentication required.' });
+
+    const authClient = client();
+    const invalidLogin = await authClient.request('/api/login', {
+      method: 'POST',
+      headers: { 'X-Test-Delay-Ticket': await reserveTicket() },
+      body: { email: created.registration.email, password: 'wrong-password' },
+    });
+    assertJson(invalidLogin, 401);
+    assert.deepEqual(invalidLogin.body, { error: 'Invalid credentials.' });
+    assert.equal(authClient.cookie, null);
+
+    const authenticated = await authClient.request('/api/login', {
+      method: 'POST',
+      headers: { 'X-Test-Delay-Ticket': await reserveTicket() },
+      body: { email: created.registration.email, password: created.registration.password },
+    });
+    assertJson(authenticated, 200);
+    assert.equal(authenticated.body.id, created.customer.id);
+    assert.match(authClient.cookie ?? '', /^eb_session=[A-Za-z0-9_-]{43}$/);
+
+    const logout = await authClient.request('/api/logout', {
+      method: 'POST',
+      headers: { 'X-Test-Delay-Ticket': await reserveTicket() },
+    });
+    assert.equal(logout.response.status, 204);
+    assert.equal(logout.body, null);
+    assert.equal(logout.response.headers.get('x-test-delay-seconds'), '0');
+    assert.equal(authClient.cookie, null);
   });
 
   test('CORS and trusted-Origin checks accept exact origins and reject mutation lookalikes without side effects', async () => {

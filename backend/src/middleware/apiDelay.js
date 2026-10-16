@@ -1,18 +1,48 @@
+const DELAY_TICKET_HEADER = 'x-test-delay-ticket';
+const DELAY_SECONDS_HEADER = 'X-Test-Delay-Seconds';
+const INVALID_DELAY_TICKET_ERROR = 'Invalid or expired test delay ticket.';
+
+function readDelayTicket(req) {
+  const value = req.headers?.[DELAY_TICKET_HEADER];
+  if (value === undefined) return { supplied: false, ticket: null };
+  if (typeof value !== 'string' || value.length === 0 || value.length > 256 || !/^[A-Za-z0-9._~-]+$/.test(value)) {
+    return { supplied: true, ticket: null };
+  }
+  return { supplied: true, ticket: value };
+}
+
 function createApiDelayMiddleware({
   delayService,
   schedule = setTimeout,
   cancel = clearTimeout,
 } = {}) {
-  if (!delayService || typeof delayService.getDelaySetting !== 'function') {
-    throw new TypeError('A delay service is required.');
+  if (
+    !delayService
+    || typeof delayService.sampleApiDelay !== 'function'
+    || typeof delayService.consumeApiDelayTicket !== 'function'
+  ) {
+    throw new TypeError('A delay service with sampling and ticket consumption is required.');
   }
 
   return (req, res, next) => {
-    const captured = delayService.getDelaySetting();
-    const shouldDelay = captured.durationSeconds > 0
-      && (captured.scope === 'API' || captured.scope === 'BOTH');
+    const suppliedTicket = readDelayTicket(req);
+    let sampledSeconds;
 
-    if (!shouldDelay) {
+    if (suppliedTicket.supplied) {
+      sampledSeconds = suppliedTicket.ticket === null
+        ? null
+        : delayService.consumeApiDelayTicket(suppliedTicket.ticket);
+      if (sampledSeconds === null) {
+        res.setHeader(DELAY_SECONDS_HEADER, '0');
+        res.status(400).json({ error: INVALID_DELAY_TICKET_ERROR });
+        return;
+      }
+    } else {
+      sampledSeconds = delayService.sampleApiDelay();
+    }
+
+    res.setHeader(DELAY_SECONDS_HEADER, String(sampledSeconds));
+    if (sampledSeconds === 0) {
       next();
       return;
     }
@@ -46,7 +76,7 @@ function createApiDelayMiddleware({
         req.removeListener?.('aborted', cleanup);
         res.removeListener?.('close', cleanup);
         originalEnd(...args);
-      }, captured.durationSeconds * 1000);
+      }, sampledSeconds * 1000);
       return res;
     };
 
@@ -54,4 +84,10 @@ function createApiDelayMiddleware({
   };
 }
 
-module.exports = { createApiDelayMiddleware };
+module.exports = {
+  createApiDelayMiddleware,
+  readDelayTicket,
+  DELAY_TICKET_HEADER,
+  DELAY_SECONDS_HEADER,
+  INVALID_DELAY_TICKET_ERROR,
+};

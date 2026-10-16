@@ -2,8 +2,8 @@
   "openapi": "3.0.3",
   "info": {
     "title": "Express Bank Demo API",
-    "version": "5.1.0",
-    "description": "Deterministic customer profile, opaque-session, account, immediate/scheduled transfer, Payments (bank account, email PayID and BPAY), demo card, and test-delay APIs. Protected actor identity is derived exclusively from the eb_session HttpOnly cookie. Cookie-authenticated mutations and the public delay-control mutation require a configured trusted Origin."
+    "version": "5.2.0",
+    "description": "Deterministic customer profile, opaque-session, account, immediate/scheduled transfer, Payments (bank account, email PayID and BPAY), demo card, and test-delay APIs. Protected actor identity is derived exclusively from the eb_session HttpOnly cookie. Cookie-authenticated mutations and public delay-control mutations require a configured trusted Origin. Ordinary /api requests may send a short-lived, single-use X-Test-Delay-Ticket reserved by the sample control; their responses expose the applied value in X-Test-Delay-Seconds. Unticketed ordinary requests sample directly at middleware entry."
   },
   "servers": [
     {
@@ -227,7 +227,7 @@
     "/api/test-controls/delay": {
       "get": {
         "summary": "Read the process-local test delay",
-        "description": "This control request is never delayed and requires no session. The setting is shared by all users and resets to 0 seconds with BOTH scope when the server process restarts.",
+        "description": "This control request is never delayed and requires no session. The inclusive whole-second range is shared by all users and resets to 0–0 seconds with BOTH scope when the server process restarts.",
         "tags": ["Test Controls"],
         "security": [],
         "responses": {
@@ -236,7 +236,7 @@
       },
       "put": {
         "summary": "Replace the process-local test delay",
-        "description": "Requires a trusted Origin but no session. Both fields are required and invalid payloads leave the previous setting unchanged. This control request is never delayed. API or BOTH delays are captured when each subsequent ordinary /api request enters the delay middleware.",
+        "description": "Requires a trusted Origin but no session. All three fields are required and invalid payloads leave the previous setting unchanged. This control request is never delayed. Each eligible event samples an inclusive whole-number value; equal bounds produce a fixed delay.",
         "tags": ["Test Controls"],
         "security": [],
         "requestBody": {
@@ -246,6 +246,22 @@
         "responses": {
           "200": { "description": "Saved delay setting", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DelaySetting" } } } },
           "400": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/test-controls/delay/sample": {
+      "post": {
+        "summary": "Reserve one API delay sample",
+        "description": "Requires a trusted Origin but no session and is never delayed. The response is not cacheable. Send the opaque ticket exactly once as X-Test-Delay-Ticket on the next ordinary /api request. Tickets are short-lived; invalid, expired, or replayed values return 400 from that ordinary request. Its response exposes the applied whole-second value as X-Test-Delay-Seconds.",
+        "tags": ["Test Controls"],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Reserved single-use delay sample",
+            "headers": { "Cache-Control": { "schema": { "type": "string", "example": "no-store" } } },
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DelaySample" } } }
+          },
           "403": { "$ref": "#/components/responses/Error" }
         }
       }
@@ -285,6 +301,21 @@
     }
   },
   "components": {
+    "parameters": {
+      "TestDelayTicket": {
+        "in": "header",
+        "name": "X-Test-Delay-Ticket",
+        "required": false,
+        "description": "Opaque short-lived ticket reserved by POST /api/test-controls/delay/sample. It is consumed once by an ordinary /api request; omit it to sample directly at request entry.",
+        "schema": { "type": "string", "maxLength": 256 }
+      }
+    },
+    "headers": {
+      "TestDelaySeconds": {
+        "description": "Whole seconds sampled and applied to this ordinary API response.",
+        "schema": { "type": "integer", "minimum": 0, "maximum": 60 }
+      }
+    },
     "securitySchemes": {
       "cookieAuth": {
         "type": "apiKey",
@@ -303,10 +334,20 @@
       "DelaySetting": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["durationSeconds", "scope"],
+        "required": ["minSeconds", "maxSeconds", "scope"],
         "properties": {
-          "durationSeconds": { "type": "integer", "minimum": 0, "maximum": 60, "example": 5 },
+          "minSeconds": { "type": "integer", "minimum": 0, "maximum": 60, "example": 2 },
+          "maxSeconds": { "type": "integer", "minimum": 0, "maximum": 60, "example": 5 },
           "scope": { "type": "string", "enum": ["API", "UI", "BOTH"] }
+        }
+      },
+      "DelaySample": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["ticket", "sampledSeconds"],
+        "properties": {
+          "ticket": { "type": "string", "description": "Opaque short-lived single-use reservation." },
+          "sampledSeconds": { "type": "integer", "minimum": 0, "maximum": 60 }
         }
       },
       "LoginRequest": {

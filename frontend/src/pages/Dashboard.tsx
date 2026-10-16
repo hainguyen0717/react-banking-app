@@ -2,9 +2,11 @@ import { FormEvent, KeyboardEvent, MouseEvent as ReactMouseEvent, useCallback, u
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { apiRequest } from '../lib/api';
 import { ACCOUNT_TYPES, AccountType, formatAud, parseAudToCents } from '../lib/banking';
-import { DEFAULT_DELAY_SETTING, DELAY_SCOPES, DelayScope, DelaySetting, isDelaySetting, parseDelayDuration, shouldDelayUiNavigation } from '../lib/delay';
+import { DEFAULT_DELAY_SETTING, DELAY_SCOPES, DelayScope, DelaySetting, formatDelayRange, isDelaySetting, parseDelaySeconds, sampleInclusiveDelay, shouldDelayUiNavigation } from '../lib/delay';
+import { delayActivityStore, useDelayActivity } from '../lib/delayActivity';
 import { useAuth } from '../auth/AuthContext';
 import { DateTimePicker } from '../components/DateTimePicker';
+import { DelayBlocker } from '../components/DelayBlocker';
 import styles from './Dashboard.module.css';
 
 interface Account {
@@ -90,6 +92,7 @@ interface Card {
 type HistoryState = Record<string, { status: 'loading' | 'ready' | 'error'; transactions: Transaction[]; error?: string }>;
 type DashboardView = 'accounts' | 'new-account' | 'new-joint-account' | 'payments' | 'transfer' | 'profile' | 'schedule-transfer' | 'scheduled-transfers' | 'cards' | 'delay-simulator';
 type FormMessage = { kind: 'success' | 'error'; text: string };
+const API_LOADING_DASHBOARD_VIEWS = new Set<DashboardView>(['scheduled-transfers', 'cards']);
 
 function labelAccountType(type: AccountType) {
   return type === 'EVERYDAY' ? 'Everyday transactions' : type.charAt(0) + type.slice(1).toLowerCase();
@@ -98,6 +101,7 @@ function labelAccountType(type: AccountType) {
 export function Dashboard() {
   const navigate = useNavigate();
   const auth = useAuth();
+  const delayActivity = useDelayActivity();
   const [searchParams] = useSearchParams();
   const customer = auth.customer;
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -158,12 +162,15 @@ export function Dashboard() {
   const disableTriggerRefs = useRef(new Map<string, HTMLButtonElement>());
   const lastDisableTriggerId = useRef<string | null>(null);
   const [delaySetting, setDelaySetting] = useState<DelaySetting>(DEFAULT_DELAY_SETTING);
-  const [delayDurationInput, setDelayDurationInput] = useState('0');
+  const [delayMinInput, setDelayMinInput] = useState('0');
+  const [delayMaxInput, setDelayMaxInput] = useState('0');
   const [delayScopeInput, setDelayScopeInput] = useState<DelayScope>('BOTH');
   const [delayStatus, setDelayStatus] = useState<'loading' | 'ready' | 'saving'>('loading');
   const [delayMessage, setDelayMessage] = useState<FormMessage | null>(null);
-  const [pendingNavigation, setPendingNavigation] = useState<{ target: string; label: string; durationSeconds: number } | null>(null);
+  const [pendingNavigation, setPendingNavigation] = useState<{ target: string; view: DashboardView; label: string; sampledSeconds: number; activityId: string | null } | null>(null);
   const navigationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const navigationActivityRef = useRef<string | null>(null);
+  const navigationSequenceRef = useRef(0);
 
   const loadDelaySetting = useCallback(async () => {
     setDelayStatus('loading');
@@ -172,7 +179,8 @@ export function Dashboard() {
       const loaded = await apiRequest<DelaySetting>('/api/test-controls/delay');
       if (!isDelaySetting(loaded)) throw new Error('The delay service returned an invalid setting.');
       setDelaySetting(loaded);
-      setDelayDurationInput(String(loaded.durationSeconds));
+      setDelayMinInput(String(loaded.minSeconds));
+      setDelayMaxInput(String(loaded.maxSeconds));
       setDelayScopeInput(loaded.scope);
       setDelayStatus('ready');
     } catch (error) {
@@ -254,12 +262,25 @@ export function Dashboard() {
   }, [loadDelaySetting]);
 
   useEffect(() => () => {
+    navigationSequenceRef.current += 1;
     if (navigationTimerRef.current !== null) clearTimeout(navigationTimerRef.current);
+    delayActivityStore.finish(navigationActivityRef.current);
   }, []);
 
   useEffect(() => {
-    if (searchParams.get('view') === 'scheduled-transfers') void loadScheduledTransfers();
-    if (searchParams.get('view') === 'cards') void loadCards();
+    const view = searchParams.get('view');
+    const handoffActivityId = navigationActivityRef.current;
+    const finishCapturedHandoff = () => {
+      delayActivityStore.finish(handoffActivityId);
+      if (navigationActivityRef.current === handoffActivityId) navigationActivityRef.current = null;
+    };
+
+    if (view === 'scheduled-transfers') {
+      void loadScheduledTransfers().finally(finishCapturedHandoff);
+    }
+    if (view === 'cards') {
+      void loadCards().finally(finishCapturedHandoff);
+    }
   }, [searchParams, loadScheduledTransfers, loadCards]);
 
   useEffect(() => {
@@ -549,7 +570,8 @@ export function Dashboard() {
       });
       if (!isDelaySetting(saved)) throw new Error('The delay service returned an invalid setting.');
       setDelaySetting(saved);
-      setDelayDurationInput(String(saved.durationSeconds));
+      setDelayMinInput(String(saved.minSeconds));
+      setDelayMaxInput(String(saved.maxSeconds));
       setDelayScopeInput(saved.scope);
       setDelayMessage({ kind: 'success', text: successText });
     } catch (error) {
@@ -561,19 +583,20 @@ export function Dashboard() {
 
   async function handleDelaySubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const durationSeconds = parseDelayDuration(delayDurationInput);
-    if (durationSeconds === null) {
-      setDelayMessage({ kind: 'error', text: 'Delay time must be a whole number from 0 to 60 seconds.' });
-      (event.currentTarget.elements.namedItem('durationSeconds') as HTMLInputElement | null)?.focus();
+    const minSeconds = parseDelaySeconds(delayMinInput);
+    const maxSeconds = parseDelaySeconds(delayMaxInput);
+    if (minSeconds === null || maxSeconds === null || minSeconds > maxSeconds) {
+      setDelayMessage({ kind: 'error', text: 'Enter whole-number minimum and maximum values from 0 to 60, with minimum no greater than maximum.' });
+      (event.currentTarget.elements.namedItem(minSeconds === null ? 'minSeconds' : 'maxSeconds') as HTMLInputElement | null)?.focus();
       return;
     }
-    await saveDelaySetting({ durationSeconds, scope: delayScopeInput }, 'Delay setting applied to subsequent operations.');
+    await saveDelaySetting({ minSeconds, maxSeconds, scope: delayScopeInput }, 'Delay range applied to subsequent operations.');
   }
 
   async function handleDelayReset() {
     await saveDelaySetting(
-      { durationSeconds: 0, scope: delaySetting.scope },
-      'Delay reset to 0 seconds.',
+      { minSeconds: 0, maxSeconds: 0, scope: delaySetting.scope },
+      'Delay range reset to 0 seconds.',
     );
   }
 
@@ -583,22 +606,47 @@ export function Dashboard() {
     label: string,
   ) {
     if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    if (pendingNavigation?.view === view) {
+      event.preventDefault();
+      return;
+    }
+    if (pendingNavigation) {
+      navigationSequenceRef.current += 1;
+      if (navigationTimerRef.current !== null) clearTimeout(navigationTimerRef.current);
+      navigationTimerRef.current = null;
+      delayActivityStore.finish(pendingNavigation.activityId);
+      navigationActivityRef.current = null;
+      setPendingNavigation(null);
+    }
     if (view === activeView) return;
     if (!shouldDelayUiNavigation(delaySetting)) return;
+
+    const sampledSeconds = sampleInclusiveDelay(delaySetting);
+    if (sampledSeconds === 0) return;
     event.preventDefault();
-    if (pendingNavigation) return;
+    const navigationSequence = ++navigationSequenceRef.current;
 
     const captured = {
       target: `/dashboard?view=${view}`,
+      view,
       label,
-      durationSeconds: delaySetting.durationSeconds,
+      sampledSeconds,
+      activityId: delayActivityStore.start(sampledSeconds, 'ui'),
     };
+    navigationActivityRef.current = captured.activityId;
     setPendingNavigation(captured);
     navigationTimerRef.current = setTimeout(() => {
+      if (navigationSequenceRef.current !== navigationSequence) return;
       navigationTimerRef.current = null;
       setPendingNavigation(null);
+      if (delaySetting.scope === 'BOTH' && API_LOADING_DASHBOARD_VIEWS.has(captured.view)) {
+        delayActivityStore.handoff(captured.activityId);
+      } else {
+        delayActivityStore.finish(captured.activityId);
+        navigationActivityRef.current = null;
+      }
       navigate(captured.target);
-    }, captured.durationSeconds * 1000);
+    }, captured.sampledSeconds * 1000);
   }
 
   async function handleLogout() {
@@ -617,8 +665,8 @@ export function Dashboard() {
   const activeView: DashboardView = validViews.includes(requestedView as DashboardView)
     ? requestedView as DashboardView
     : 'accounts';
-  const delayDurationHasError = delayMessage?.kind === 'error'
-    && delayMessage.text === 'Delay time must be a whole number from 0 to 60 seconds.';
+  const delayRangeHasError = delayMessage?.kind === 'error'
+    && delayMessage.text.startsWith('Enter whole-number minimum');
 
   return (
     <div className={styles.shell} data-testid="dashboard-shell">
@@ -630,11 +678,11 @@ export function Dashboard() {
             <strong data-testid="delay-banner-status">
               {delayStatus === 'loading'
                 ? 'Loading test delay…'
-                : `Test delay: ${delaySetting.durationSeconds}s · ${delaySetting.scope}`}
+                : `Test delay: ${formatDelayRange(delaySetting)} · ${delaySetting.scope}`}
             </strong>
             {pendingNavigation ? (
               <span role="status" aria-live="polite" data-testid="delay-navigation-pending">
-                Opening {pendingNavigation.label} after {pendingNavigation.durationSeconds}s UI delay.
+                Opening {pendingNavigation.label} after a sampled {pendingNavigation.sampledSeconds}s UI delay.
               </span>
             ) : null}
             {delayMessage ? (
@@ -645,7 +693,7 @@ export function Dashboard() {
           </div>
           <div className={styles.delayBannerActions} data-testid="delay-banner-actions">
             <Link className={styles.bannerLink} to="/dashboard?view=delay-simulator" onClick={(event) => handleDashboardNavigation(event, 'delay-simulator', 'Delay simulator')} data-testid="delay-banner-configure">Configure</Link>
-            <button className={styles.bannerReset} type="button" onClick={() => void handleDelayReset()} disabled={delayStatus !== 'ready' || delaySetting.durationSeconds === 0} data-testid="delay-banner-reset">Reset to 0s</button>
+            <button className={styles.bannerReset} type="button" onClick={() => void handleDelayReset()} disabled={delayStatus !== 'ready' || (delaySetting.minSeconds === 0 && delaySetting.maxSeconds === 0)} data-testid="delay-banner-reset">Reset to 0s</button>
           </div>
         </section>
         <div className={styles.customerMeta} data-testid="dashboard-customer-meta">
@@ -731,19 +779,24 @@ export function Dashboard() {
             </nav>
           </aside>
 
-          <div className={styles.dashboardContent} id="dashboard-content" tabIndex={-1} data-testid="dashboard-content">
+          <div className={styles.dashboardContent} id="dashboard-content" tabIndex={-1} aria-busy={delayActivity.active || undefined} data-testid="dashboard-content">
+            <div className={styles.dashboardContentInner} {...(delayActivity.active ? { inert: '' } : {})} data-testid="dashboard-content-inner">
             {activeView === 'delay-simulator' ? (
               <section className={styles.viewPanel} aria-labelledby="delay-simulator-heading" data-testid="dashboard-view-delay-simulator">
                 <p className={styles.eyebrow} data-testid="delay-simulator-eyebrow">Test controls</p>
                 <h2 className={styles.sectionTitle} id="delay-simulator-heading" data-testid="delay-simulator-heading">Delay simulator</h2>
                 <div className={styles.actionCard} data-testid="delay-simulator-card">
-                  <p className={styles.actionCopy} data-testid="delay-simulator-copy">Slow subsequent API responses, dashboard destination changes, or both. Control requests remain responsive so the delay can always be changed or reset.</p>
+                  <p className={styles.actionCopy} data-testid="delay-simulator-copy">Choose an inclusive range. Each subsequent API response or dashboard destination change samples its own whole-second delay. Control requests remain responsive.</p>
                   <form className={styles.form} onSubmit={handleDelaySubmit} noValidate aria-busy={delayStatus !== 'ready'} data-testid="delay-simulator-form">
-                    <label className={styles.label} htmlFor="delay-duration" data-testid="delay-simulator-duration-label">
-                      Delay time in seconds
-                      <input className={styles.input} id="delay-duration" name="durationSeconds" type="number" min="0" max="60" step="1" required value={delayDurationInput} onChange={(event) => { setDelayDurationInput(event.target.value); if (delayDurationHasError) setDelayMessage(null); }} aria-invalid={delayDurationHasError || undefined} aria-describedby={delayDurationHasError ? 'delay-duration-error' : undefined} disabled={delayStatus !== 'ready'} data-testid="delay-simulator-duration" />
+                    <label className={styles.label} htmlFor="delay-minimum" data-testid="delay-simulator-minimum-label">
+                      Minimum delay in seconds
+                      <input className={styles.input} id="delay-minimum" name="minSeconds" type="number" min="0" max="60" step="1" required value={delayMinInput} onChange={(event) => { setDelayMinInput(event.target.value); if (delayRangeHasError) setDelayMessage(null); }} aria-invalid={delayRangeHasError || undefined} aria-describedby={delayRangeHasError ? 'delay-range-error' : undefined} disabled={delayStatus !== 'ready'} data-testid="delay-simulator-minimum" />
                     </label>
-                    {delayDurationHasError ? <p className={styles.error} id="delay-duration-error" data-testid="delay-simulator-duration-error">{delayMessage?.text}</p> : null}
+                    <label className={styles.label} htmlFor="delay-maximum" data-testid="delay-simulator-maximum-label">
+                      Maximum delay in seconds
+                      <input className={styles.input} id="delay-maximum" name="maxSeconds" type="number" min="0" max="60" step="1" required value={delayMaxInput} onChange={(event) => { setDelayMaxInput(event.target.value); if (delayRangeHasError) setDelayMessage(null); }} aria-invalid={delayRangeHasError || undefined} aria-describedby={delayRangeHasError ? 'delay-range-error' : undefined} disabled={delayStatus !== 'ready'} data-testid="delay-simulator-maximum" />
+                    </label>
+                    {delayRangeHasError ? <p className={styles.error} id="delay-range-error" data-testid="delay-simulator-range-error">{delayMessage?.text}</p> : null}
                     <fieldset className={styles.methodSelector} disabled={delayStatus !== 'ready'} data-testid="delay-simulator-scope">
                       <legend className={styles.label} data-testid="delay-simulator-scope-label">Apply delay to</legend>
                       {DELAY_SCOPES.map((scope) => (
@@ -755,7 +808,7 @@ export function Dashboard() {
                     </fieldset>
                     <div className={styles.reviewActions} data-testid="delay-simulator-actions">
                       <button className={styles.primaryButton} type="submit" disabled={delayStatus !== 'ready'} data-testid="delay-simulator-apply">{delayStatus === 'saving' ? 'Saving…' : 'Apply delay'}</button>
-                      <button type="button" onClick={() => void handleDelayReset()} disabled={delayStatus !== 'ready' || delaySetting.durationSeconds === 0} data-testid="delay-simulator-reset">Reset to 0s</button>
+                      <button type="button" onClick={() => void handleDelayReset()} disabled={delayStatus !== 'ready' || (delaySetting.minSeconds === 0 && delaySetting.maxSeconds === 0)} data-testid="delay-simulator-reset">Reset to 0s</button>
                       <button type="button" onClick={() => void loadDelaySetting()} disabled={delayStatus !== 'ready'} data-testid="delay-simulator-refresh">Refresh setting</button>
                     </div>
                   </form>
@@ -1134,6 +1187,8 @@ export function Dashboard() {
                 ) : null}
               </section>
             ) : null}
+            </div>
+            <DelayBlocker testIdPrefix="dashboard-delay-blocker" />
           </div>
         </div>
       </main>

@@ -61,38 +61,49 @@ test('delay controls are public, origin-protected on mutation, and reject invali
   const app = createApp({ prisma: {}, logger: { info: () => {}, error: () => {} } });
   const getLayer = app._router.stack.find((layer) => layer.route?.path === '/api/test-controls/delay' && layer.route.methods.get);
   const putLayer = app._router.stack.find((layer) => layer.route?.path === '/api/test-controls/delay' && layer.route.methods.put);
+  const sampleLayer = app._router.stack.find((layer) => layer.route?.path === '/api/test-controls/delay/sample' && layer.route.methods.post);
   const apiDelayLayer = app._router.stack.find((layer) => !layer.route && String(layer.regexp).includes('api'));
   assert(getLayer, 'GET delay control should be registered');
   assert(putLayer, 'PUT delay control should be registered');
+  assert(sampleLayer, 'POST delay sample control should be registered');
   assert(apiDelayLayer, 'ordinary API delay middleware should be mounted');
   assert.equal(getLayer.route.stack.length, 1, 'GET control should not require authentication');
   assert.equal(putLayer.route.stack.length, 2, 'PUT control should require only trusted origin');
   assert(app._router.stack.indexOf(getLayer) < app._router.stack.indexOf(apiDelayLayer));
   assert(app._router.stack.indexOf(putLayer) < app._router.stack.indexOf(apiDelayLayer));
+  assert(app._router.stack.indexOf(sampleLayer) < app._router.stack.indexOf(apiDelayLayer));
 
   const initial = await invokeRoute(app, '/api/test-controls/delay', 'get');
-  assert.deepEqual(initial.res.body, { durationSeconds: 0, scope: 'BOTH' });
+  assert.deepEqual(initial.res.body, { minSeconds: 0, maxSeconds: 0, scope: 'BOTH' });
 
   const forbidden = await invokeRoute(app, '/api/test-controls/delay', 'put', {
-    body: { durationSeconds: 4, scope: 'API' },
+    body: { minSeconds: 2, maxSeconds: 4, scope: 'API' },
   });
   assert.equal(forbidden.res.statusCode, 403);
 
   const saved = await invokeRoute(app, '/api/test-controls/delay', 'put', {
     headers: { origin: 'http://localhost:5173' },
-    body: { durationSeconds: 4, scope: 'API' },
+    body: { minSeconds: 2, maxSeconds: 4, scope: 'API' },
   });
   assert.equal(saved.res.statusCode, 200);
-  assert.deepEqual(saved.res.body, { durationSeconds: 4, scope: 'API' });
+  assert.deepEqual(saved.res.body, { minSeconds: 2, maxSeconds: 4, scope: 'API' });
+
+  const sample = await invokeRoute(app, '/api/test-controls/delay/sample', 'post', {
+    headers: { origin: 'http://localhost:5173' },
+  });
+  assert.equal(sample.res.statusCode, 200);
+  assert.equal(typeof sample.res.body.ticket, 'string');
+  assert.equal(Number.isInteger(sample.res.body.sampledSeconds), true);
+  assert.equal(sample.res.headers['Cache-Control'], 'no-store');
 
   const invalid = await invokeRoute(app, '/api/test-controls/delay', 'put', {
     headers: { origin: 'http://localhost:5173' },
-    body: { durationSeconds: 4.5, scope: 'UI' },
+    body: { minSeconds: 5, maxSeconds: 4, scope: 'UI' },
   });
   assert.equal(invalid.res.statusCode, 400);
-  assert.match(invalid.res.body.error, /integer from 0 to 60/);
+  assert.match(invalid.res.body.error, /minSeconds no greater than maxSeconds/);
   const unchanged = await invokeRoute(app, '/api/test-controls/delay', 'get');
-  assert.deepEqual(unchanged.res.body, { durationSeconds: 4, scope: 'API' });
+  assert.deepEqual(unchanged.res.body, { minSeconds: 2, maxSeconds: 4, scope: 'API' });
 });
 
 test('JSON parser client errors remain 400 without masking unrelated internal errors', () => {

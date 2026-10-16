@@ -28,7 +28,7 @@ const SWAGGER_UI_OPTIONS = {
     persistAuthorization: false,
   },
 };
-const DELAY_SETTING_VALIDATION_ERROR = 'Provide exactly durationSeconds as an integer from 0 to 60 and scope as API, UI, or BOTH.';
+const DELAY_SETTING_VALIDATION_ERROR = 'Provide exactly minSeconds and maxSeconds as integers from 0 to 60, with minSeconds no greater than maxSeconds, and scope as API, UI, or BOTH.';
 
 const defaultLogger = {
   info: (...args) => console.log(...args),
@@ -94,7 +94,12 @@ function createApp({
   });
   const trustedOrigin = createTrustedOriginMiddleware(frontendOrigins);
 
-  app.use(cors({ origin: (origin, callback) => resolveCorsOrigin(origin, callback, frontendOrigins), credentials: true }));
+  app.use(cors({
+    origin: (origin, callback) => resolveCorsOrigin(origin, callback, frontendOrigins),
+    credentials: true,
+    allowedHeaders: ['Content-Type', 'X-Test-Delay-Ticket'],
+    exposedHeaders: ['X-Test-Delay-Seconds'],
+  }));
   app.use(express.json());
   app.use(createRequestLogger(logger));
 
@@ -108,6 +113,11 @@ function createApp({
       return res.status(400).json({ error: DELAY_SETTING_VALIDATION_ERROR });
     }
     return res.json(saved);
+  });
+
+  app.post('/api/test-controls/delay/sample', trustedOrigin, (_req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    return res.json(delayService.reserveApiDelay());
   });
 
   app.use('/api', createApiDelayMiddleware({

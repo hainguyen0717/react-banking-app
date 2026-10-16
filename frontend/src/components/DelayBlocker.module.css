@@ -1,0 +1,54 @@
+.backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  min-height: 12rem;
+  padding: 1rem;
+  border-radius: inherit;
+  background: rgba(1, 7, 18, 0.68);
+}
+
+.dialog {
+  width: min(100%, 24rem);
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 1.25rem;
+  border: 1px solid var(--dashboard-border-strong);
+  border-radius: 1rem;
+  background: var(--dashboard-surface-fallback);
+  color: var(--dashboard-foreground);
+  box-shadow: var(--dashboard-shadow-md);
+}
+
+.dialog:focus-visible {
+  outline: 3px solid var(--dashboard-focus);
+  outline-offset: 3px;
+}
+
+.spinner {
+  width: 2.5rem;
+  height: 2.5rem;
+  flex: none;
+  border: 3px solid rgba(186, 230, 253, 0.26);
+  border-top-color: var(--dashboard-accent);
+  border-radius: 50%;
+  animation: delay-spin 800ms linear infinite;
+}
+
+.copy { display: grid; gap: 0.2rem; }
+.copy strong { font-size: 1rem; }
+.copy span { color: var(--dashboard-muted-foreground); font-variant-numeric: tabular-nums; }
+
+@supports ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+  .backdrop { -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); }
+  .dialog { background: var(--dashboard-surface-glass-strong); -webkit-backdrop-filter: blur(var(--dashboard-blur)); backdrop-filter: blur(var(--dashboard-blur)); }
+}
+
+@keyframes delay-spin { to { transform: rotate(360deg); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner { animation: none; border-color: var(--dashboard-accent); border-right-color: transparent; }
+}
