@@ -2,8 +2,8 @@
   "openapi": "3.0.3",
   "info": {
     "title": "Express Bank Demo API",
-    "version": "5.0.0",
-    "description": "Deterministic customer profile, opaque-session, account, immediate/scheduled transfer, Payments (bank account, email PayID and BPAY), and demo card APIs. Protected actor identity is derived exclusively from the eb_session HttpOnly cookie. Cookie-authenticated mutations also require a configured trusted Origin."
+    "version": "5.1.0",
+    "description": "Deterministic customer profile, opaque-session, account, immediate/scheduled transfer, Payments (bank account, email PayID and BPAY), demo card, and test-delay APIs. Protected actor identity is derived exclusively from the eb_session HttpOnly cookie. Cookie-authenticated mutations and the public delay-control mutation require a configured trusted Origin."
   },
   "servers": [
     {
@@ -224,6 +224,32 @@
     "/api/cards/{cardId}/disable": {
       "post": { "summary": "Permanently disable an active or locked holder-owned card", "tags": ["Cards"], "security": [{ "cookieAuth": [] }], "parameters": [{ "in": "path", "name": "cardId", "required": true, "schema": { "type": "string", "format": "uuid" } }], "responses": { "200": { "description": "Disabled masked card", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Card" } } } }, "401": { "$ref": "#/components/responses/Error" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" } } }
     },
+    "/api/test-controls/delay": {
+      "get": {
+        "summary": "Read the process-local test delay",
+        "description": "This control request is never delayed and requires no session. The setting is shared by all users and resets to 0 seconds with BOTH scope when the server process restarts.",
+        "tags": ["Test Controls"],
+        "security": [],
+        "responses": {
+          "200": { "description": "Current delay setting", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DelaySetting" } } } }
+        }
+      },
+      "put": {
+        "summary": "Replace the process-local test delay",
+        "description": "Requires a trusted Origin but no session. Both fields are required and invalid payloads leave the previous setting unchanged. This control request is never delayed. API or BOTH delays are captured when each subsequent ordinary /api request enters the delay middleware.",
+        "tags": ["Test Controls"],
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DelaySetting" } } }
+        },
+        "responses": {
+          "200": { "description": "Saved delay setting", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DelaySetting" } } } },
+          "400": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
     "/api/health": {
       "get": {
         "summary": "Check API and database health",
@@ -274,6 +300,15 @@
       }
     },
     "schemas": {
+      "DelaySetting": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["durationSeconds", "scope"],
+        "properties": {
+          "durationSeconds": { "type": "integer", "minimum": 0, "maximum": 60, "example": 5 },
+          "scope": { "type": "string", "enum": ["API", "UI", "BOTH"] }
+        }
+      },
       "LoginRequest": {
         "type": "object",
         "required": ["email", "password"],

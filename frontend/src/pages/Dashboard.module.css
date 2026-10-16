@@ -40,6 +40,29 @@
 }
 
 .brand { color: var(--dashboard-accent); font-weight: 700; letter-spacing: 0.12em; font-size: 0.875rem; }
+.delayBanner { min-width: 0; display: flex; align-items: center; justify-content: center; gap: 1rem; }
+.delayBannerCopy { min-width: 0; display: grid; gap: 0.2rem; color: var(--dashboard-muted-foreground); font-size: 0.8125rem; text-align: center; }
+.delayBannerCopy strong { color: var(--dashboard-foreground); font-size: 0.875rem; }
+.delayBannerActions { display: flex; align-items: center; gap: 0.5rem; }
+.bannerLink, .bannerReset {
+  min-height: 2.75rem;
+  display: inline-flex;
+  align-items: center;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--dashboard-border);
+  border-radius: 0.5rem;
+  background: var(--dashboard-control);
+  color: var(--dashboard-foreground);
+  font: inherit;
+  font-size: 0.8125rem;
+  font-weight: 700;
+  text-decoration: none;
+  cursor: pointer;
+}
+.bannerLink:hover, .bannerReset:hover:not(:disabled) { border-color: var(--dashboard-border-strong); color: var(--dashboard-accent); }
+.bannerReset:disabled { opacity: 0.48; cursor: not-allowed; }
+.bannerError { color: #ffe4e6; }
+.bannerSuccess { color: #dcfce7; }
 .customerMeta { min-width: 0; display: flex; align-items: center; justify-content: flex-end; gap: 1rem; }
 .customerName { color: var(--dashboard-muted-foreground); overflow-wrap: anywhere; }
 
@@ -280,6 +303,8 @@
 }
 
 @media (max-width: 64rem) {
+  .topbar { flex-wrap: wrap; }
+  .delayBanner { order: 3; width: 100%; }
   .dashboardLayout { grid-template-columns: 1fr; }
   .sidebar { position: static; }
   .functionNav { display: flex; flex-wrap: wrap; gap: 1rem; }
@@ -292,6 +317,8 @@
 @media (max-width: 48rem) {
   .topbar { align-items: flex-start; }
   .customerMeta { align-items: flex-end; flex-direction: column; gap: 0.5rem; }
+  .delayBanner { align-items: stretch; flex-direction: column; }
+  .delayBannerActions { justify-content: center; }
   .summary { grid-template-columns: 1fr; gap: 1.5rem; margin-bottom: 2rem; }
   .sectionHeading { align-items: flex-start; flex-wrap: wrap; }
   .functionNav { display: block; }
@@ -311,5 +338,5 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .skipLink, .logoutButton, .refreshButton, .historyButton, .accountCard, .input, .primaryButton, .navLink, .inlineLink, .cardActions button { transition: none; }
+  .skipLink, .logoutButton, .refreshButton, .historyButton, .accountCard, .input, .primaryButton, .navLink, .inlineLink, .cardActions button, .bannerLink, .bannerReset { transition: none; }
 }

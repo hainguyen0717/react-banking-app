@@ -10,7 +10,7 @@ API paths are case-sensitive. Protected APIs derive identity only from the verif
 | ---: | --- | --- | --- | --- |
 | 1 | Create a customer | Registers normalized customer data and stores a bcrypt password hash. Duplicate emails are rejected. | `POST /api/customers` | **Implemented** |
 | 2 | Login | Authenticates an active customer, updates `lastLoginAt`, creates a hashed server-side session, sets `eb_session`, and returns a non-sensitive profile. | `POST /api/login` | **Implemented** |
-| 3 | Navigate the dashboard | Uses an Accounts group, standalone Cards and Payments destinations, Transfer group, and Profile group. Payments appears after Cards and before Transfer. Query-backed views preserve active state; missing or invalid views fall back to accounts, and `/welcome` redirects to the dashboard for compatibility. | Frontend routes under `/dashboard?view=...`, including `accounts`, `new-account`, `new-joint-account`, `cards`, `payments`, `transfer`, `schedule-transfer`, `scheduled-transfers`, and `profile` | **Implemented** |
+| 3 | Navigate the dashboard | Uses a top status banner, grouped left menu, and middle content region. The menu has Accounts, Cards, Payments, Transfer, Profile, and Test Controls destinations. Query-backed views preserve active state; missing or invalid views fall back to accounts, and `/welcome` redirects to the dashboard for compatibility. | Frontend routes under `/dashboard?view=...`, including `accounts`, `new-account`, `new-joint-account`, `cards`, `payments`, `transfer`, `schedule-transfer`, `scheduled-transfers`, `profile`, and `delay-simulator` | **Implemented** |
 | 4 | Create an account | Creates an `EVERYDAY`, `SAVINGS`, or `BUSINESS` AUD account for the authenticated customer. | `POST /api/accounts` | **Implemented** |
 | 5 | View accounts | Lists all personal and joint accounts owned by the authenticated active customer. | `GET /api/accounts` | **Implemented** |
 | 6 | View transaction history | Lists one authenticated-owned account's transfers newest first. | `GET /api/accounts/:accountId/transactions` | **Implemented** |
@@ -25,6 +25,7 @@ API paths are case-sensitive. Protected APIs derive identity only from the verif
 | 15 | Schedule a transfer | Creates a private one-time future transfer from a picker-only local date/time. Funds are checked but not reserved; due processing rechecks rules and records `COMPLETED` or side-effect-free `FAILED`. | `GET\|POST /api/scheduled-transfers`, schedule dashboard views | **Implemented** |
 | 16 | Manage demo debit cards | Opens holder-specific cards on personally or jointly owned accounts, creates exactly five display-only samples, and supports temporary lock/unlock or permanent disable. | Card APIs, `/dashboard?view=cards` | **Implemented** |
 | 17 | Make an immediate payment | Resolves and reviews an Express account number, email PayID, or fictional BPAY biller before final confirmation. Account/PayID payments update both internal sides; BPAY debits the source only. Joint owners may pay, while actor-owned destinations, invalid references, and overdrafts are side-effect-free failures. | `POST /api/payments/resolve`, `POST /api/payments`, `/dashboard?view=payments` | **Implemented** |
+| 18 | Configure test delay | Reads and replaces one shared 0–60 second integer delay with `API`, `UI`, or `BOTH` scope. The banner shows the active setting and offers a responsive reset. UI-inclusive scope delays dashboard destination changes only; API-backed actions rely only on server delay. | `GET\|PUT /api/test-controls/delay`, `/dashboard?view=delay-simulator` | **Implemented** |
 
 ## Operational functions
 
@@ -37,6 +38,7 @@ API paths are case-sensitive. Protected APIs derive identity only from the verif
 | 5 | Log API requests | Logs method, path, response status, and duration without query-string values. | Applies to all active APIs. | **Implemented** |
 | 6 | Shut down safely | Closes the server and disconnects Prisma on `SIGINT`/`SIGTERM`. | Process lifecycle behavior. | **Implemented** |
 | 7 | Process due transfers | Runs at startup and on a configurable non-overlapping interval, atomically claims due pending schedules, and stops before Prisma disconnect. | `SCHEDULED_TRANSFER_POLL_INTERVAL_MS` | **Implemented** |
+| 8 | Simulate slow APIs and UI navigation | Stores one in-memory delay per server process, defaulting to 0 seconds with `BOTH` scope. Ordinary API requests capture API-inclusive delay at entry; exact control endpoints, docs, legacy health redirect, and background work remain responsive. Restart restores the default. | Delay control API and dashboard Test Controls | **Implemented** |
 
 ## Implemented API summary
 
@@ -58,12 +60,15 @@ API paths are case-sensitive. Protected APIs derive identity only from the verif
 | `GET` | `/api/cards/:cardId` | `200` holder-owned masked card | `401` authentication, `403` foreign card, `404` missing card |
 | `POST` | `/api/cards/:cardId/lock`, `/unlock`, `/disable` | `200` updated masked card | `401`, `403`, `404`, `409` invalid/repeated transition |
 | `GET` | `/api/accounts/:accountId/transactions` | `200` `{ "transactions": [...] }` | `401` authentication required, `403` ownership, `404` account missing |
+| `GET`, `PUT` | `/api/test-controls/delay` | `200` complete `{ "durationSeconds", "scope" }` setting | `400` missing/fractional/out-of-range/unknown payload, `403` untrusted PUT origin |
 | `GET` | `/api/health` | `200` `{ "status": "ok" }` | `503` database unavailable |
 | `GET` | `/health` | `308` redirect | None defined |
 | `GET` | `/docs`, `/docs/` | `308` canonical redirect or `200` Swagger UI | None defined |
 | `GET` | `/docs/openapi.json` | `200` OpenAPI JSON | None defined |
 
 Swagger **Try it out** uses the API's serving origin and browser-managed HttpOnly session cookie. Login sets the cookie; the UI does not read or preload it. Mutating calls still require an exact configured frontend origin or an exact match to the API request's protocol, host, and port. Credentialed CORS is not broadened.
+
+The delay control is intentionally process-local and public for deterministic API/UI test scripts. PUT requires both fields and rejects invalid input without changing the active setting. Reset writes 0 seconds while retaining the active scope. External changes appear in the dashboard after reload or explicit refresh; there is no polling.
 
 ## Money and history contract
 

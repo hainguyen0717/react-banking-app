@@ -6,6 +6,8 @@ const {
   createDefaultServices,
   createRequestLogger,
   resolveCorsOrigin,
+  handleUnhandledApiError,
+  DELAY_SETTING_VALIDATION_ERROR,
   SWAGGER_UI_OPTIONS,
 } = require('../../src/createApp');
 
@@ -53,6 +55,92 @@ test('CORS allows only the two exact local frontend origins', async () => {
   assert.equal(await checkCorsOrigin('http://127.0.0.1:3000'), false);
   assert.equal(await checkCorsOrigin('http://example.com'), false);
   assert.equal(await checkCorsOrigin('http://localhost:5173.evil.example'), false);
+});
+
+test('delay controls are public, origin-protected on mutation, and reject invalid updates atomically', async () => {
+  const app = createApp({ prisma: {}, logger: { info: () => {}, error: () => {} } });
+  const getLayer = app._router.stack.find((layer) => layer.route?.path === '/api/test-controls/delay' && layer.route.methods.get);
+  const putLayer = app._router.stack.find((layer) => layer.route?.path === '/api/test-controls/delay' && layer.route.methods.put);
+  const apiDelayLayer = app._router.stack.find((layer) => !layer.route && String(layer.regexp).includes('api'));
+  assert(getLayer, 'GET delay control should be registered');
+  assert(putLayer, 'PUT delay control should be registered');
+  assert(apiDelayLayer, 'ordinary API delay middleware should be mounted');
+  assert.equal(getLayer.route.stack.length, 1, 'GET control should not require authentication');
+  assert.equal(putLayer.route.stack.length, 2, 'PUT control should require only trusted origin');
+  assert(app._router.stack.indexOf(getLayer) < app._router.stack.indexOf(apiDelayLayer));
+  assert(app._router.stack.indexOf(putLayer) < app._router.stack.indexOf(apiDelayLayer));
+
+  const initial = await invokeRoute(app, '/api/test-controls/delay', 'get');
+  assert.deepEqual(initial.res.body, { durationSeconds: 0, scope: 'BOTH' });
+
+  const forbidden = await invokeRoute(app, '/api/test-controls/delay', 'put', {
+    body: { durationSeconds: 4, scope: 'API' },
+  });
+  assert.equal(forbidden.res.statusCode, 403);
+
+  const saved = await invokeRoute(app, '/api/test-controls/delay', 'put', {
+    headers: { origin: 'http://localhost:5173' },
+    body: { durationSeconds: 4, scope: 'API' },
+  });
+  assert.equal(saved.res.statusCode, 200);
+  assert.deepEqual(saved.res.body, { durationSeconds: 4, scope: 'API' });
+
+  const invalid = await invokeRoute(app, '/api/test-controls/delay', 'put', {
+    headers: { origin: 'http://localhost:5173' },
+    body: { durationSeconds: 4.5, scope: 'UI' },
+  });
+  assert.equal(invalid.res.statusCode, 400);
+  assert.match(invalid.res.body.error, /integer from 0 to 60/);
+  const unchanged = await invokeRoute(app, '/api/test-controls/delay', 'get');
+  assert.deepEqual(unchanged.res.body, { durationSeconds: 4, scope: 'API' });
+});
+
+test('JSON parser client errors remain 400 without masking unrelated internal errors', () => {
+  const messages = [];
+  const logger = { error: (...args) => messages.push(args) };
+  const createResponse = () => ({
+    statusCode: 200,
+    body: null,
+    status(code) { this.statusCode = code; return this; },
+    json(value) { this.body = value; return this; },
+  });
+  const parserError = Object.assign(new SyntaxError('Unexpected token'), {
+    status: 400,
+    type: 'entity.parse.failed',
+  });
+
+  const delayResponse = createResponse();
+  handleUnhandledApiError(
+    parserError,
+    { method: 'PUT', path: '/api/test-controls/delay' },
+    delayResponse,
+    logger,
+  );
+  assert.equal(delayResponse.statusCode, 400);
+  assert.deepEqual(delayResponse.body, { error: DELAY_SETTING_VALIDATION_ERROR });
+
+  const ordinaryResponse = createResponse();
+  handleUnhandledApiError(
+    parserError,
+    { method: 'POST', path: '/api/accounts' },
+    ordinaryResponse,
+    logger,
+  );
+  assert.equal(ordinaryResponse.statusCode, 400);
+  assert.deepEqual(ordinaryResponse.body, { error: 'Invalid JSON request body.' });
+  assert.equal(messages.length, 0, 'expected client parse errors should not be logged as internal failures');
+
+  const internalResponse = createResponse();
+  const internalError = new Error('database unavailable');
+  handleUnhandledApiError(
+    internalError,
+    { method: 'GET', path: '/api/accounts' },
+    internalResponse,
+    logger,
+  );
+  assert.equal(internalResponse.statusCode, 500);
+  assert.deepEqual(internalResponse.body, { error: 'Internal server error.' });
+  assert.deepEqual(messages, [['Unhandled API error', internalError]]);
 });
 
 test('request logging records only the path and never query values', () => {

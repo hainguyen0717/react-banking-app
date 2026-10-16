@@ -13,6 +13,8 @@ const { getPrismaClient } = require('./lib/prisma');
 const { getSessionConfig, getFrontendOrigins } = require('./config/sessionConfig');
 const { createAuthenticateMiddleware } = require('./middleware/authenticate');
 const { createTrustedOriginMiddleware } = require('./middleware/trustedOrigin');
+const { createApiDelayMiddleware } = require('./middleware/apiDelay');
+const { createDelayService } = require('./services/delayService');
 const { readSessionCookie, serializeSessionCookie, serializeClearedSessionCookie } = require('./http/sessionCookie');
 const openApiDocument = require('./docs/openapi.json');
 
@@ -26,6 +28,7 @@ const SWAGGER_UI_OPTIONS = {
     persistAuthorization: false,
   },
 };
+const DELAY_SETTING_VALIDATION_ERROR = 'Provide exactly durationSeconds as an integer from 0 to 60 and scope as API, UI, or BOTH.';
 
 const defaultLogger = {
   info: (...args) => console.log(...args),
@@ -76,6 +79,9 @@ function createApp({
   sessionConfig = getSessionConfig(),
   frontendOrigins = getFrontendOrigins(),
   isProduction = process.env.NODE_ENV === 'production',
+  delayService = createDelayService(),
+  delaySchedule = setTimeout,
+  delayCancel = clearTimeout,
 } = {}) {
   const app = express();
   const resolvedServices = {
@@ -91,6 +97,24 @@ function createApp({
   app.use(cors({ origin: (origin, callback) => resolveCorsOrigin(origin, callback, frontendOrigins), credentials: true }));
   app.use(express.json());
   app.use(createRequestLogger(logger));
+
+  app.get('/api/test-controls/delay', (_req, res) => {
+    res.json(delayService.getDelaySetting());
+  });
+
+  app.put('/api/test-controls/delay', trustedOrigin, (req, res) => {
+    const saved = delayService.setDelaySetting(req.body);
+    if (!saved) {
+      return res.status(400).json({ error: DELAY_SETTING_VALIDATION_ERROR });
+    }
+    return res.json(saved);
+  });
+
+  app.use('/api', createApiDelayMiddleware({
+    delayService,
+    schedule: delaySchedule,
+    cancel: delayCancel,
+  }));
 
   app.post('/api/login', trustedOrigin, async (req, res) => {
     const { email, password } = req.body ?? {};
@@ -309,9 +333,8 @@ function createApp({
     res.redirect(308, '/api/health');
   });
 
-  app.use((error, _req, res, _next) => {
-    logger.error('Unhandled API error', error);
-    res.status(500).json({ error: 'Internal server error.' });
+  app.use((error, req, res, _next) => {
+    handleUnhandledApiError(error, req, res, logger);
   });
 
   return app;
@@ -326,11 +349,25 @@ function handleApiError(error, res, logger, logMessage) {
   return res.status(500).json({ error: 'Internal server error.' });
 }
 
+function handleUnhandledApiError(error, req, res, logger) {
+  if (error?.status === 400 && error?.type === 'entity.parse.failed') {
+    const message = req.method === 'PUT' && req.path === '/api/test-controls/delay'
+      ? DELAY_SETTING_VALIDATION_ERROR
+      : 'Invalid JSON request body.';
+    return res.status(400).json({ error: message });
+  }
+
+  logger.error('Unhandled API error', error);
+  return res.status(500).json({ error: 'Internal server error.' });
+}
+
 module.exports = {
   createApp,
   createRequestLogger,
   createDefaultServices,
   resolveCorsOrigin,
   handleApiError,
+  handleUnhandledApiError,
+  DELAY_SETTING_VALIDATION_ERROR,
   SWAGGER_UI_OPTIONS,
 };

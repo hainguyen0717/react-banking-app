@@ -1,7 +1,8 @@
-import { FormEvent, KeyboardEvent, useCallback, useEffect, useRef, useState } from 'react';
+import { FormEvent, KeyboardEvent, MouseEvent as ReactMouseEvent, useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { apiRequest } from '../lib/api';
 import { ACCOUNT_TYPES, AccountType, formatAud, parseAudToCents } from '../lib/banking';
+import { DEFAULT_DELAY_SETTING, DELAY_SCOPES, DelayScope, DelaySetting, isDelaySetting, parseDelayDuration, shouldDelayUiNavigation } from '../lib/delay';
 import { useAuth } from '../auth/AuthContext';
 import { DateTimePicker } from '../components/DateTimePicker';
 import styles from './Dashboard.module.css';
@@ -87,7 +88,7 @@ interface Card {
 }
 
 type HistoryState = Record<string, { status: 'loading' | 'ready' | 'error'; transactions: Transaction[]; error?: string }>;
-type DashboardView = 'accounts' | 'new-account' | 'new-joint-account' | 'payments' | 'transfer' | 'profile' | 'schedule-transfer' | 'scheduled-transfers' | 'cards';
+type DashboardView = 'accounts' | 'new-account' | 'new-joint-account' | 'payments' | 'transfer' | 'profile' | 'schedule-transfer' | 'scheduled-transfers' | 'cards' | 'delay-simulator';
 type FormMessage = { kind: 'success' | 'error'; text: string };
 
 function labelAccountType(type: AccountType) {
@@ -156,6 +157,29 @@ export function Dashboard() {
   const disableCancelRef = useRef<HTMLButtonElement>(null);
   const disableTriggerRefs = useRef(new Map<string, HTMLButtonElement>());
   const lastDisableTriggerId = useRef<string | null>(null);
+  const [delaySetting, setDelaySetting] = useState<DelaySetting>(DEFAULT_DELAY_SETTING);
+  const [delayDurationInput, setDelayDurationInput] = useState('0');
+  const [delayScopeInput, setDelayScopeInput] = useState<DelayScope>('BOTH');
+  const [delayStatus, setDelayStatus] = useState<'loading' | 'ready' | 'saving'>('loading');
+  const [delayMessage, setDelayMessage] = useState<FormMessage | null>(null);
+  const [pendingNavigation, setPendingNavigation] = useState<{ target: string; label: string; durationSeconds: number } | null>(null);
+  const navigationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const loadDelaySetting = useCallback(async () => {
+    setDelayStatus('loading');
+    setDelayMessage(null);
+    try {
+      const loaded = await apiRequest<DelaySetting>('/api/test-controls/delay');
+      if (!isDelaySetting(loaded)) throw new Error('The delay service returned an invalid setting.');
+      setDelaySetting(loaded);
+      setDelayDurationInput(String(loaded.durationSeconds));
+      setDelayScopeInput(loaded.scope);
+      setDelayStatus('ready');
+    } catch (error) {
+      setDelayStatus('ready');
+      setDelayMessage({ kind: 'error', text: error instanceof Error ? error.message : 'Delay settings could not be loaded.' });
+    }
+  }, []);
 
   const loadAccounts = useCallback(async () => {
     if (!customer) return;
@@ -224,6 +248,14 @@ export function Dashboard() {
   useEffect(() => {
     void loadAccounts();
   }, [loadAccounts]);
+
+  useEffect(() => {
+    void loadDelaySetting();
+  }, [loadDelaySetting]);
+
+  useEffect(() => () => {
+    if (navigationTimerRef.current !== null) clearTimeout(navigationTimerRef.current);
+  }, []);
 
   useEffect(() => {
     if (searchParams.get('view') === 'scheduled-transfers') void loadScheduledTransfers();
@@ -507,6 +539,68 @@ export function Dashboard() {
     void loadTransactions(accountId);
   }
 
+  async function saveDelaySetting(nextSetting: DelaySetting, successText: string) {
+    setDelayStatus('saving');
+    setDelayMessage(null);
+    try {
+      const saved = await apiRequest<DelaySetting>('/api/test-controls/delay', {
+        method: 'PUT',
+        body: JSON.stringify(nextSetting),
+      });
+      if (!isDelaySetting(saved)) throw new Error('The delay service returned an invalid setting.');
+      setDelaySetting(saved);
+      setDelayDurationInput(String(saved.durationSeconds));
+      setDelayScopeInput(saved.scope);
+      setDelayMessage({ kind: 'success', text: successText });
+    } catch (error) {
+      setDelayMessage({ kind: 'error', text: error instanceof Error ? error.message : 'Delay settings could not be saved.' });
+    } finally {
+      setDelayStatus('ready');
+    }
+  }
+
+  async function handleDelaySubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const durationSeconds = parseDelayDuration(delayDurationInput);
+    if (durationSeconds === null) {
+      setDelayMessage({ kind: 'error', text: 'Delay time must be a whole number from 0 to 60 seconds.' });
+      (event.currentTarget.elements.namedItem('durationSeconds') as HTMLInputElement | null)?.focus();
+      return;
+    }
+    await saveDelaySetting({ durationSeconds, scope: delayScopeInput }, 'Delay setting applied to subsequent operations.');
+  }
+
+  async function handleDelayReset() {
+    await saveDelaySetting(
+      { durationSeconds: 0, scope: delaySetting.scope },
+      'Delay reset to 0 seconds.',
+    );
+  }
+
+  function handleDashboardNavigation(
+    event: ReactMouseEvent<HTMLAnchorElement>,
+    view: DashboardView,
+    label: string,
+  ) {
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    if (view === activeView) return;
+    if (!shouldDelayUiNavigation(delaySetting)) return;
+    event.preventDefault();
+    if (pendingNavigation) return;
+
+    const captured = {
+      target: `/dashboard?view=${view}`,
+      label,
+      durationSeconds: delaySetting.durationSeconds,
+    };
+    setPendingNavigation(captured);
+    navigationTimerRef.current = setTimeout(() => {
+      navigationTimerRef.current = null;
+      setPendingNavigation(null);
+      navigate(captured.target);
+    }, captured.durationSeconds * 1000);
+  }
+
   async function handleLogout() {
     setLogoutError(null);
     try {
@@ -519,16 +613,41 @@ export function Dashboard() {
 
   const totalBalance = accounts.reduce((total, account) => total + account.balanceCents, 0);
   const requestedView = searchParams.get('view');
-  const validViews: DashboardView[] = ['accounts', 'new-account', 'new-joint-account', 'payments', 'transfer', 'profile', 'schedule-transfer', 'scheduled-transfers', 'cards'];
+  const validViews: DashboardView[] = ['accounts', 'new-account', 'new-joint-account', 'payments', 'transfer', 'profile', 'schedule-transfer', 'scheduled-transfers', 'cards', 'delay-simulator'];
   const activeView: DashboardView = validViews.includes(requestedView as DashboardView)
     ? requestedView as DashboardView
     : 'accounts';
+  const delayDurationHasError = delayMessage?.kind === 'error'
+    && delayMessage.text === 'Delay time must be a whole number from 0 to 60 seconds.';
 
   return (
     <div className={styles.shell} data-testid="dashboard-shell">
       <a className={styles.skipLink} href="#dashboard-content" data-testid="dashboard-skip-link">Skip to dashboard content</a>
       <header className={styles.topbar} data-testid="dashboard-header">
         <div className={styles.brand} data-testid="dashboard-brand">EXPRESS / BANK</div>
+        <section className={styles.delayBanner} aria-label="Test delay status" data-testid="delay-banner">
+          <div className={styles.delayBannerCopy} data-testid="delay-banner-copy">
+            <strong data-testid="delay-banner-status">
+              {delayStatus === 'loading'
+                ? 'Loading test delay…'
+                : `Test delay: ${delaySetting.durationSeconds}s · ${delaySetting.scope}`}
+            </strong>
+            {pendingNavigation ? (
+              <span role="status" aria-live="polite" data-testid="delay-navigation-pending">
+                Opening {pendingNavigation.label} after {pendingNavigation.durationSeconds}s UI delay.
+              </span>
+            ) : null}
+            {delayMessage ? (
+              <span className={delayMessage.kind === 'error' ? styles.bannerError : styles.bannerSuccess} role={delayMessage.kind === 'error' ? 'alert' : 'status'} data-testid={`delay-banner-${delayMessage.kind}`}>
+                {delayMessage.text}
+              </span>
+            ) : null}
+          </div>
+          <div className={styles.delayBannerActions} data-testid="delay-banner-actions">
+            <Link className={styles.bannerLink} to="/dashboard?view=delay-simulator" onClick={(event) => handleDashboardNavigation(event, 'delay-simulator', 'Delay simulator')} data-testid="delay-banner-configure">Configure</Link>
+            <button className={styles.bannerReset} type="button" onClick={() => void handleDelayReset()} disabled={delayStatus !== 'ready' || delaySetting.durationSeconds === 0} data-testid="delay-banner-reset">Reset to 0s</button>
+          </div>
+        </section>
         <div className={styles.customerMeta} data-testid="dashboard-customer-meta">
           <span className={styles.customerName} data-testid="dashboard-customer-name">{customer.firstName} {customer.lastName}</span>
           <button className={styles.logoutButton} type="button" onClick={handleLogout} data-testid="dashboard-logout">Log out</button>
@@ -557,27 +676,27 @@ export function Dashboard() {
                 <h2 className={styles.navGroupLabel} id="dashboard-nav-accounts-label" data-testid="dashboard-nav-group-accounts-label">Accounts</h2>
                 <ul className={styles.navList} data-testid="dashboard-nav-group-accounts-list">
                   <li data-testid="dashboard-nav-accounts-overview-item">
-                    <Link className={styles.navLink} to="/dashboard?view=accounts" aria-current={activeView === 'accounts' ? 'page' : undefined} data-testid="dashboard-nav-accounts-overview">Accounts overview</Link>
+                    <Link className={styles.navLink} to="/dashboard?view=accounts" onClick={(event) => handleDashboardNavigation(event, 'accounts', 'Accounts overview')} aria-current={activeView === 'accounts' ? 'page' : undefined} data-testid="dashboard-nav-accounts-overview">Accounts overview</Link>
                   </li>
                   <li data-testid="dashboard-nav-new-account-item">
-                    <Link className={styles.navLink} to="/dashboard?view=new-account" aria-current={activeView === 'new-account' ? 'page' : undefined} data-testid="dashboard-nav-new-account">New account</Link>
+                    <Link className={styles.navLink} to="/dashboard?view=new-account" onClick={(event) => handleDashboardNavigation(event, 'new-account', 'New account')} aria-current={activeView === 'new-account' ? 'page' : undefined} data-testid="dashboard-nav-new-account">New account</Link>
                   </li>
                   <li data-testid="dashboard-nav-new-joint-account-item">
-                    <Link className={styles.navLink} to="/dashboard?view=new-joint-account" aria-current={activeView === 'new-joint-account' ? 'page' : undefined} data-testid="dashboard-nav-new-joint-account">New joint account</Link>
+                    <Link className={styles.navLink} to="/dashboard?view=new-joint-account" onClick={(event) => handleDashboardNavigation(event, 'new-joint-account', 'New joint account')} aria-current={activeView === 'new-joint-account' ? 'page' : undefined} data-testid="dashboard-nav-new-joint-account">New joint account</Link>
                   </li>
                 </ul>
               </section>
               <section className={styles.standaloneNav} aria-label="Cards" data-testid="dashboard-nav-cards-standalone">
                 <ul className={styles.navList} data-testid="dashboard-nav-cards-list">
                   <li data-testid="dashboard-nav-cards-item">
-                    <Link className={styles.navLink} to="/dashboard?view=cards" aria-current={activeView === 'cards' ? 'page' : undefined} data-testid="dashboard-nav-cards">Cards</Link>
+                    <Link className={styles.navLink} to="/dashboard?view=cards" onClick={(event) => handleDashboardNavigation(event, 'cards', 'Cards')} aria-current={activeView === 'cards' ? 'page' : undefined} data-testid="dashboard-nav-cards">Cards</Link>
                   </li>
                 </ul>
               </section>
               <section className={styles.standaloneNav} aria-label="Payments" data-testid="dashboard-nav-payments-standalone">
                 <ul className={styles.navList} data-testid="dashboard-nav-payments-list">
                   <li data-testid="dashboard-nav-payments-item">
-                    <Link className={styles.navLink} to="/dashboard?view=payments" aria-current={activeView === 'payments' ? 'page' : undefined} data-testid="dashboard-nav-payments">Payments</Link>
+                    <Link className={styles.navLink} to="/dashboard?view=payments" onClick={(event) => handleDashboardNavigation(event, 'payments', 'Payments')} aria-current={activeView === 'payments' ? 'page' : undefined} data-testid="dashboard-nav-payments">Payments</Link>
                   </li>
                 </ul>
               </section>
@@ -585,26 +704,64 @@ export function Dashboard() {
                 <h2 className={styles.navGroupLabel} id="dashboard-nav-transfer-label" data-testid="dashboard-nav-group-transfer-label">Transfer</h2>
                 <ul className={styles.navList} data-testid="dashboard-nav-group-transfer-list">
                   <li data-testid="dashboard-nav-transfer-item">
-                    <Link className={styles.navLink} to="/dashboard?view=transfer" aria-current={activeView === 'transfer' ? 'page' : undefined} data-testid="dashboard-nav-transfer">Transfer</Link>
+                    <Link className={styles.navLink} to="/dashboard?view=transfer" onClick={(event) => handleDashboardNavigation(event, 'transfer', 'Transfer')} aria-current={activeView === 'transfer' ? 'page' : undefined} data-testid="dashboard-nav-transfer">Transfer</Link>
                   </li>
                   <li data-testid="dashboard-nav-schedule-transfer-item">
-                    <Link className={styles.navLink} to="/dashboard?view=schedule-transfer" aria-current={activeView === 'schedule-transfer' ? 'page' : undefined} data-testid="dashboard-nav-schedule-transfer">Schedule transfer</Link>
+                    <Link className={styles.navLink} to="/dashboard?view=schedule-transfer" onClick={(event) => handleDashboardNavigation(event, 'schedule-transfer', 'Schedule transfer')} aria-current={activeView === 'schedule-transfer' ? 'page' : undefined} data-testid="dashboard-nav-schedule-transfer">Schedule transfer</Link>
                   </li>
                   <li data-testid="dashboard-nav-scheduled-transfers-item">
-                    <Link className={styles.navLink} to="/dashboard?view=scheduled-transfers" aria-current={activeView === 'scheduled-transfers' ? 'page' : undefined} data-testid="dashboard-nav-scheduled-transfers">Scheduled transfers</Link>
+                    <Link className={styles.navLink} to="/dashboard?view=scheduled-transfers" onClick={(event) => handleDashboardNavigation(event, 'scheduled-transfers', 'Scheduled transfers')} aria-current={activeView === 'scheduled-transfers' ? 'page' : undefined} data-testid="dashboard-nav-scheduled-transfers">Scheduled transfers</Link>
                   </li>
                 </ul>
               </section>
               <section className={styles.navGroup} aria-labelledby="dashboard-nav-profile-label" data-testid="dashboard-nav-group-profile">
                 <h2 className={styles.navGroupLabel} id="dashboard-nav-profile-label" data-testid="dashboard-nav-group-profile-label">Profile</h2>
                 <ul className={styles.navList} data-testid="dashboard-nav-group-profile-list">
-                  <li data-testid="dashboard-nav-profile-item"><Link className={styles.navLink} to="/dashboard?view=profile" aria-current={activeView === 'profile' ? 'page' : undefined} data-testid="dashboard-nav-profile">Personal information</Link></li>
+                  <li data-testid="dashboard-nav-profile-item"><Link className={styles.navLink} to="/dashboard?view=profile" onClick={(event) => handleDashboardNavigation(event, 'profile', 'Personal information')} aria-current={activeView === 'profile' ? 'page' : undefined} data-testid="dashboard-nav-profile">Personal information</Link></li>
+                </ul>
+              </section>
+              <section className={styles.navGroup} aria-labelledby="dashboard-nav-test-controls-label" data-testid="dashboard-nav-group-test-controls">
+                <h2 className={styles.navGroupLabel} id="dashboard-nav-test-controls-label" data-testid="dashboard-nav-group-test-controls-label">Test Controls</h2>
+                <ul className={styles.navList} data-testid="dashboard-nav-group-test-controls-list">
+                  <li data-testid="dashboard-nav-delay-simulator-item">
+                    <Link className={styles.navLink} to="/dashboard?view=delay-simulator" onClick={(event) => handleDashboardNavigation(event, 'delay-simulator', 'Delay simulator')} aria-current={activeView === 'delay-simulator' ? 'page' : undefined} data-testid="dashboard-nav-delay-simulator">Delay simulator</Link>
+                  </li>
                 </ul>
               </section>
             </nav>
           </aside>
 
           <div className={styles.dashboardContent} id="dashboard-content" tabIndex={-1} data-testid="dashboard-content">
+            {activeView === 'delay-simulator' ? (
+              <section className={styles.viewPanel} aria-labelledby="delay-simulator-heading" data-testid="dashboard-view-delay-simulator">
+                <p className={styles.eyebrow} data-testid="delay-simulator-eyebrow">Test controls</p>
+                <h2 className={styles.sectionTitle} id="delay-simulator-heading" data-testid="delay-simulator-heading">Delay simulator</h2>
+                <div className={styles.actionCard} data-testid="delay-simulator-card">
+                  <p className={styles.actionCopy} data-testid="delay-simulator-copy">Slow subsequent API responses, dashboard destination changes, or both. Control requests remain responsive so the delay can always be changed or reset.</p>
+                  <form className={styles.form} onSubmit={handleDelaySubmit} noValidate aria-busy={delayStatus !== 'ready'} data-testid="delay-simulator-form">
+                    <label className={styles.label} htmlFor="delay-duration" data-testid="delay-simulator-duration-label">
+                      Delay time in seconds
+                      <input className={styles.input} id="delay-duration" name="durationSeconds" type="number" min="0" max="60" step="1" required value={delayDurationInput} onChange={(event) => { setDelayDurationInput(event.target.value); if (delayDurationHasError) setDelayMessage(null); }} aria-invalid={delayDurationHasError || undefined} aria-describedby={delayDurationHasError ? 'delay-duration-error' : undefined} disabled={delayStatus !== 'ready'} data-testid="delay-simulator-duration" />
+                    </label>
+                    {delayDurationHasError ? <p className={styles.error} id="delay-duration-error" data-testid="delay-simulator-duration-error">{delayMessage?.text}</p> : null}
+                    <fieldset className={styles.methodSelector} disabled={delayStatus !== 'ready'} data-testid="delay-simulator-scope">
+                      <legend className={styles.label} data-testid="delay-simulator-scope-label">Apply delay to</legend>
+                      {DELAY_SCOPES.map((scope) => (
+                        <label className={delayScopeInput === scope ? styles.methodSelected : styles.methodOption} key={scope} data-testid={`delay-simulator-scope-option-${scope.toLowerCase()}`}>
+                          <input type="radio" name="delayScope" value={scope} checked={delayScopeInput === scope} onChange={() => setDelayScopeInput(scope)} data-testid={`delay-simulator-scope-${scope.toLowerCase()}`} />
+                          {scope}
+                        </label>
+                      ))}
+                    </fieldset>
+                    <div className={styles.reviewActions} data-testid="delay-simulator-actions">
+                      <button className={styles.primaryButton} type="submit" disabled={delayStatus !== 'ready'} data-testid="delay-simulator-apply">{delayStatus === 'saving' ? 'Saving…' : 'Apply delay'}</button>
+                      <button type="button" onClick={() => void handleDelayReset()} disabled={delayStatus !== 'ready' || delaySetting.durationSeconds === 0} data-testid="delay-simulator-reset">Reset to 0s</button>
+                      <button type="button" onClick={() => void loadDelaySetting()} disabled={delayStatus !== 'ready'} data-testid="delay-simulator-refresh">Refresh setting</button>
+                    </div>
+                  </form>
+                </div>
+              </section>
+            ) : null}
             {activeView === 'accounts' ? (
               <section className={styles.viewPanel} aria-labelledby="accounts-heading" data-testid="dashboard-view-accounts">
                 <div className={styles.sectionHeading} data-testid="dashboard-accounts-heading-row">
@@ -621,7 +778,7 @@ export function Dashboard() {
                   <div className={styles.emptyState} data-testid="dashboard-accounts-empty">
                     <h3 data-testid="dashboard-accounts-empty-title">No accounts yet</h3>
                     <p data-testid="dashboard-accounts-empty-copy">Choose one of the three account types to create your first test account.</p>
-                    <Link className={styles.inlineLink} to="/dashboard?view=new-account" data-testid="dashboard-accounts-empty-new-account-link">Open a new account</Link>
+                    <Link className={styles.inlineLink} to="/dashboard?view=new-account" onClick={(event) => handleDashboardNavigation(event, 'new-account', 'New account')} data-testid="dashboard-accounts-empty-new-account-link">Open a new account</Link>
                   </div>
                 ) : null}
 

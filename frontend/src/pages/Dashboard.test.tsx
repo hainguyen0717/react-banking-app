@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Dashboard } from './Dashboard';
@@ -14,7 +14,15 @@ function response(body: unknown, status = 200) {
   return { ok: status >= 200 && status < 300, status, json: async () => body } as Response;
 }
 
-function renderDashboard(initialEntry = '/dashboard') {
+function renderDashboard(initialEntry = '/dashboard', initialDelay = { durationSeconds: 0, scope: 'BOTH' }) {
+  const configuredFetch = globalThis.fetch;
+  vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+    const method = init?.method ?? 'GET';
+    if (String(input).endsWith('/api/test-controls/delay') && method === 'GET') {
+      return Promise.resolve(response(initialDelay));
+    }
+    return configuredFetch(input, init);
+  }));
   return render(
     <AuthProvider initialState={authenticatedState}>
       <MemoryRouter initialEntries={[initialEntry]}><Dashboard /></MemoryRouter>
@@ -29,6 +37,8 @@ const authenticatedState: AuthState = {
 };
 
 afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
   localStorage.clear();
   vi.restoreAllMocks();
 });
@@ -92,6 +102,7 @@ describe('Dashboard navigation', () => {
     expect(screen.getByTestId('dashboard-nav-cards')).toHaveAttribute('href', '/dashboard?view=cards');
     expect(screen.getByTestId('dashboard-nav-payments')).toHaveAttribute('href', '/dashboard?view=payments');
     expect(screen.getByTestId('dashboard-nav-transfer')).toHaveAttribute('href', '/dashboard?view=transfer');
+    expect(screen.getByTestId('dashboard-nav-delay-simulator')).toHaveAttribute('href', '/dashboard?view=delay-simulator');
     expect(screen.getByTestId('dashboard-nav-accounts-overview')).toHaveAttribute('aria-current', 'page');
     expect(screen.getByTestId('dashboard-nav-new-account')).not.toHaveAttribute('aria-current');
     expect(screen.queryByTestId('dashboard-actions')).not.toBeInTheDocument();
@@ -142,6 +153,89 @@ describe('Dashboard navigation', () => {
     expect(await screen.findByTestId('transactions-panel-account-1')).toBeInTheDocument();
     expect(screen.getByTestId('transaction-row-transaction-1')).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('delays UI-inclusive navigation once while retaining the current view and href', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(response({ accounts }));
+    renderDashboard('/dashboard?view=accounts', { durationSeconds: 3, scope: 'UI' });
+    await screen.findByTestId('account-card-account-1');
+    expect(await screen.findByTestId('delay-banner-status')).toHaveTextContent('3s · UI');
+    vi.useFakeTimers();
+
+    const newAccountLink = screen.getByTestId('dashboard-nav-new-account');
+    expect(newAccountLink).toHaveAttribute('href', '/dashboard?view=new-account');
+    fireEvent.click(newAccountLink);
+    fireEvent.click(screen.getByTestId('dashboard-nav-transfer'));
+    expect(screen.getByTestId('dashboard-view-accounts')).toBeInTheDocument();
+    expect(screen.getByTestId('delay-navigation-pending')).toHaveTextContent('New account');
+
+    act(() => vi.advanceTimersByTime(2999));
+    expect(screen.getByTestId('dashboard-view-accounts')).toBeInTheDocument();
+    act(() => vi.advanceTimersByTime(1));
+    expect(screen.getByTestId('dashboard-view-new-account')).toBeInTheDocument();
+  });
+
+  it('navigates immediately for API-only delay settings', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(response({ accounts }));
+    renderDashboard('/dashboard?view=accounts', { durationSeconds: 60, scope: 'API' });
+    await screen.findByTestId('account-card-account-1');
+    fireEvent.click(screen.getByTestId('dashboard-nav-new-account'));
+    expect(screen.getByTestId('dashboard-view-new-account')).toBeInTheDocument();
+    expect(screen.queryByTestId('delay-navigation-pending')).not.toBeInTheDocument();
+  });
+});
+
+describe('Dashboard delay simulator', () => {
+  it('loads, validates and applies the complete public delay setting', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(response({ accounts }))
+      .mockResolvedValueOnce(response({ durationSeconds: 12, scope: 'BOTH' }));
+    renderDashboard('/dashboard?view=delay-simulator', { durationSeconds: 4, scope: 'UI' });
+
+    expect(await screen.findByTestId('delay-simulator-form')).toBeInTheDocument();
+    expect(screen.getByTestId('delay-simulator-duration')).toHaveValue(4);
+    expect(screen.getByTestId('delay-simulator-scope-ui')).toBeChecked();
+    fireEvent.change(screen.getByTestId('delay-simulator-duration'), { target: { value: '1.5' } });
+    fireEvent.click(screen.getByTestId('delay-simulator-apply'));
+    expect(screen.getByTestId('delay-banner-error')).toHaveTextContent('whole number from 0 to 60');
+    expect(screen.getByTestId('delay-simulator-duration-error')).toHaveTextContent('whole number from 0 to 60');
+    expect(screen.getByTestId('delay-simulator-duration')).toHaveAttribute('aria-invalid', 'true');
+    expect(screen.getByTestId('delay-simulator-duration')).toHaveFocus();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    fireEvent.change(screen.getByTestId('delay-simulator-duration'), { target: { value: '12' } });
+    fireEvent.click(screen.getByTestId('delay-simulator-scope-both'));
+    fireEvent.click(screen.getByTestId('delay-simulator-apply'));
+    expect(await screen.findByTestId('delay-banner-success')).toHaveTextContent('applied');
+    expect(screen.getByTestId('delay-banner-status')).toHaveTextContent('12s · BOTH');
+    expect(JSON.parse((fetchMock.mock.calls[1][1] as RequestInit).body as string)).toEqual({ durationSeconds: 12, scope: 'BOTH' });
+  });
+
+  it('resets to zero while retaining the active scope', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(response({ accounts }))
+      .mockResolvedValueOnce(response({ durationSeconds: 0, scope: 'API' }));
+    renderDashboard('/dashboard?view=delay-simulator', { durationSeconds: 8, scope: 'API' });
+    await screen.findByTestId('delay-simulator-form');
+    fireEvent.click(screen.getByTestId('delay-banner-reset'));
+    expect(await screen.findByTestId('delay-banner-success')).toHaveTextContent('reset');
+    expect(JSON.parse((fetchMock.mock.calls[1][1] as RequestInit).body as string)).toEqual({ durationSeconds: 0, scope: 'API' });
+  });
+
+  it('does not add a client-side delay to API-backed actions when BOTH is active', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(response({ accounts }))
+      .mockResolvedValueOnce(response({ id: 'transfer-1' }, 201))
+      .mockResolvedValueOnce(response({ accounts }));
+    renderDashboard('/dashboard?view=transfer', { durationSeconds: 20, scope: 'BOTH' });
+    await screen.findByTestId('transfer-form');
+    vi.useFakeTimers();
+    fireEvent.change(screen.getByTestId('transfer-destination-account'), { target: { value: 'EXB-000000002' } });
+    fireEvent.change(screen.getByTestId('transfer-amount'), { target: { value: '1.00' } });
+    fireEvent.click(screen.getByTestId('transfer-submit'));
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(fetchMock.mock.calls[1][0]).toContain('/api/transfers');
+    expect(screen.queryByTestId('delay-navigation-pending')).not.toBeInTheDocument();
   });
 });
 

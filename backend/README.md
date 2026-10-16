@@ -23,6 +23,12 @@ Open `/docs/` on the configured backend origin; with the copied development envi
 
 Standard **Try it out** requests use the serving origin and include browser credentials. Run `POST /api/login` first and the browser will retain the returned HttpOnly `eb_session` cookie for later protected calls. The UI does not read, embed, or persist the cookie, password, or authorization value. Existing authentication, ownership, validation, `401`/`403`, and trusted-origin behavior still applies.
 
+## Test delay simulator
+
+`GET /api/test-controls/delay` returns the current shared delay and `PUT /api/test-controls/delay` atomically replaces it with a complete payload such as `{ "durationSeconds": 5, "scope": "BOTH" }`. Duration must be a whole number from 0 through 60 and scope must be `API`, `UI`, or `BOTH`. Both endpoints are intentionally public for test scripts; the mutation still requires a trusted `Origin`.
+
+The setting is in-memory per server process, shared across users, and starts as `{ "durationSeconds": 0, "scope": "BOTH" }` after each restart. The control endpoints, documentation, and legacy `/health` redirect remain responsive. `API` and `BOTH` delay completion of subsequent ordinary `/api` responses using the value captured when each request enters middleware, without changing status, headers, body, or completed service side effects. UI delay behavior is owned by the dashboard and is not added to API-backed form actions.
+
 The in-process scheduled-transfer worker runs once at startup and then every `SCHEDULED_TRANSFER_POLL_INTERVAL_MS` (default `1000`). Shutdown stops and awaits the worker before Prisma disconnects, so due work never races client teardown.
 
 The seed command requires `SEED_CUSTOMER_EMAIL`, `SEED_CUSTOMER_PASSWORD`, `SEED_CUSTOMER_FIRST_NAME`, and `SEED_CUSTOMER_LAST_NAME`. Optional profile variables are documented in `.env.example`; rerunning the seed updates the matching email without exposing its password hash. It also upserts a non-login fictional recipient, email PayID `harbour.services@example.test`, and fictional BPAY billers `123456` (10-digit reference) and `98765` (8-digit reference). No recipient credential is printed or documented.
@@ -68,6 +74,7 @@ SQLite `CHECK` constraints enforce the three account types, valid `SINGLE`/`JOIN
 | `POST` | `/api/cards/:cardId/unlock` | Unlock a locked card. |
 | `POST` | `/api/cards/:cardId/disable` | Permanently disable an active or locked card. |
 | `GET` | `/api/accounts/:accountId/transactions` | List newest-first directional transfer history for an owned account. |
+| `GET`, `PUT` | `/api/test-controls/delay` | Read or atomically replace the public 0–60 second test delay; PUT requires a trusted Origin. |
 | `GET` | `/api/health` | Check database connectivity. |
 | `GET` | `/docs`, `/docs/` | Redirect to or render the public Swagger UI. |
 | `GET` | `/docs/openapi.json` | Return the active OpenAPI 3.0 contract. |
