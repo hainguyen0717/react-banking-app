@@ -8,13 +8,14 @@ const {
   resolveCorsOrigin,
   handleUnhandledApiError,
   DELAY_SETTING_VALIDATION_ERROR,
+  CORS_ALLOWED_HEADERS,
   SWAGGER_UI_OPTIONS,
 } = require('../../src/createApp');
 
 async function invokeRoute(app, path, method, { headers = {}, body = {}, params = {} } = {}) {
   const routeLayer = app._router.stack.find((candidate) => candidate.route?.path === path && candidate.route.methods[method]);
   assert(routeLayer, `${method.toUpperCase()} ${path} should be registered`);
-  const req = { method: method.toUpperCase(), headers, body, params };
+  const req = { method: method.toUpperCase(), headers: { 'content-type': 'application/json', ...headers }, body, params };
   const res = {
     statusCode: 200, body: null, headers: {},
     status(code) { this.statusCode = code; return this; },
@@ -48,6 +49,7 @@ function checkCorsOrigin(origin) {
 }
 
 test('CORS allows only the two exact local frontend origins', async () => {
+  assert.deepEqual(CORS_ALLOWED_HEADERS, ['Authorization', 'Content-Type', 'X-Test-Delay-Ticket']);
   assert.equal(await checkCorsOrigin('http://localhost:5173'), true);
   assert.equal(await checkCorsOrigin('http://127.0.0.1:5173'), true);
   assert.equal(await checkCorsOrigin(undefined), true);
@@ -68,7 +70,7 @@ test('delay controls are public, origin-protected on mutation, and reject invali
   assert(sampleLayer, 'POST delay sample control should be registered');
   assert(apiDelayLayer, 'ordinary API delay middleware should be mounted');
   assert.equal(getLayer.route.stack.length, 1, 'GET control should not require authentication');
-  assert.equal(putLayer.route.stack.length, 2, 'PUT control should require only trusted origin');
+  assert.equal(putLayer.route.stack.length, 3, 'PUT control should require trusted origin and JSON Content-Type');
   assert(app._router.stack.indexOf(getLayer) < app._router.stack.indexOf(apiDelayLayer));
   assert(app._router.stack.indexOf(putLayer) < app._router.stack.indexOf(apiDelayLayer));
   assert(app._router.stack.indexOf(sampleLayer) < app._router.stack.indexOf(apiDelayLayer));
@@ -288,7 +290,15 @@ test('createApp service overrides remain independent from default wiring', async
     body: { email: 'override@example.com', password: 'password' },
   });
 
-  assert.deepEqual(response.body, { id: 'override-customer' });
+  assert.deepEqual(response.body, {
+    customer: { id: 'override-customer' },
+    accessToken: 'A'.repeat(43),
+    tokenType: 'Bearer',
+    expiresAt: response.body.expiresAt,
+  });
+  assert.match(response.body.expiresAt, /^\d{4}-\d{2}-\d{2}T/);
+  assert.equal(response.headers['Cache-Control'], 'no-store, no-cache, must-revalidate');
+  assert.equal(response.headers.Pragma, 'no-cache');
   assert.equal(response.statusCode, 200);
 });
 
@@ -312,10 +322,10 @@ test('protected routes derive the actor from req.auth and expose no customer-id 
   assert(paths.includes('/api/joint-accounts'));
   assert(paths.includes('/api/accounts/:accountId/transactions'));
   assert(!paths.some((path) => String(path).includes(':customerId')));
-  assert.equal(app._router.stack.find((layer) => layer.route?.path === '/api/login').route.stack.length, 2);
-  assert.equal(app._router.stack.find((layer) => layer.route?.path === '/api/customers').route.stack.length, 2);
+  assert.equal(app._router.stack.find((layer) => layer.route?.path === '/api/login').route.stack.length, 3);
+  assert.equal(app._router.stack.find((layer) => layer.route?.path === '/api/customers').route.stack.length, 3);
   assert.equal(app._router.stack.find((layer) => layer.route?.path === '/api/accounts' && layer.route.methods.get).route.stack.length, 2);
-  assert.equal(app._router.stack.find((layer) => layer.route?.path === '/api/accounts' && layer.route.methods.post).route.stack.length, 3);
+  assert.equal(app._router.stack.find((layer) => layer.route?.path === '/api/accounts' && layer.route.methods.post).route.stack.length, 4);
 
   const authenticatedHeaders = { cookie: `eb_session=${'A'.repeat(43)}`, origin: 'http://localhost:5173' };
   await invokeRoute(app, '/api/accounts', 'get', { headers: authenticatedHeaders });
@@ -344,6 +354,65 @@ test('logout revokes only req.auth.session and clears the cookie', async () => {
   assert.equal(deletedSessionId, 'current-session');
   assert.equal(res.statusCode, 204);
   assert.match(res.headers['Set-Cookie'], /^eb_session=; Path=\/; HttpOnly; SameSite=Lax; Max-Age=0/);
+});
+
+test('bearer logout revokes the selected bearer session without clearing a separate browser cookie', async () => {
+  const bearerToken = 'B'.repeat(43);
+  const cookieToken = 'C'.repeat(43);
+  let deletedSessionId;
+  const app = createApp({
+    prisma: { customer: {}, account: {}, transfer: {}, authSession: {} },
+    services: {
+      resolveSession: async (token) => ({
+        session: { id: token === bearerToken ? 'bearer-session' : 'cookie-session' },
+        customer: { id: 'customer-1' },
+      }),
+      deleteSession: async (sessionId) => { deletedSessionId = sessionId; },
+    },
+    logger: { info: () => {}, error: () => {} },
+  });
+
+  const { req, res } = await invokeRoute(app, '/api/logout', 'post', {
+    headers: { authorization: `Bearer ${bearerToken}`, cookie: `eb_session=${cookieToken}` },
+  });
+  assert.equal(req.auth.method, 'bearer');
+  assert.equal(deletedSessionId, 'bearer-session');
+  assert.equal(res.statusCode, 204);
+  assert.equal(res.headers['Set-Cookie'], undefined);
+
+  const matching = await invokeRoute(app, '/api/logout', 'post', {
+    headers: { authorization: `Bearer ${bearerToken}`, cookie: `eb_session=${bearerToken}` },
+  });
+  assert.match(matching.res.headers['Set-Cookie'], /^eb_session=; Path=\/; HttpOnly/);
+});
+
+test('required-body routes reject unsupported media types while bodyless actions do not require one', async () => {
+  let createdAccounts = 0;
+  let lockedCards = 0;
+  const app = createApp({
+    prisma: { customer: {}, account: {}, transfer: {}, authSession: {}, card: {} },
+    services: {
+      resolveSession: async () => ({ session: { id: 'session-1' }, customer: { id: 'customer-1' } }),
+      createAccount: async () => { createdAccounts += 1; return {}; },
+      lockCard: async () => { lockedCards += 1; return {}; },
+    },
+    logger: { info: () => {}, error: () => {} },
+  });
+  const token = 'A'.repeat(43);
+  const unsupported = await invokeRoute(app, '/api/accounts', 'post', {
+    headers: { authorization: `Bearer ${token}`, 'content-type': 'text/plain' },
+    body: { type: 'EVERYDAY' },
+  });
+  assert.equal(unsupported.res.statusCode, 415);
+  assert.deepEqual(unsupported.res.body, { error: 'Content-Type must be application/json.' });
+  assert.equal(createdAccounts, 0);
+
+  const bodyless = await invokeRoute(app, '/api/cards/:cardId/lock', 'post', {
+    headers: { authorization: `Bearer ${token}`, 'content-type': undefined },
+    params: { cardId: 'card-1' },
+  });
+  assert.equal(bodyless.res.statusCode, 200);
+  assert.equal(lockedCards, 1);
 });
 
 test('protected mutations authenticate before trusted-origin checks while public mutations still require origin', async () => {
@@ -431,8 +500,8 @@ test('payment resolution and confirmation authenticate first, require trusted or
   assert.equal(resolve.res.statusCode, 200);
   assert.equal(create.res.statusCode, 201);
   assert.deepEqual(calls.map(([name, actor]) => [name, actor]), [['resolve', 'verified-customer'], ['create', 'verified-customer']]);
-  assert.equal(app._router.stack.find((layer) => layer.route?.path === '/api/payments/resolve').route.stack.length, 3);
-  assert.equal(app._router.stack.find((layer) => layer.route?.path === '/api/payments').route.stack.length, 3);
+  assert.equal(app._router.stack.find((layer) => layer.route?.path === '/api/payments/resolve').route.stack.length, 4);
+  assert.equal(app._router.stack.find((layer) => layer.route?.path === '/api/payments').route.stack.length, 4);
 
   const unauthenticated = await invokeRoute(app, '/api/payments', 'post', { headers: { origin: 'http://localhost:5173' } });
   assert.equal(unauthenticated.res.statusCode, 401);

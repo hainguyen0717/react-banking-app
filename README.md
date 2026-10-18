@@ -48,7 +48,7 @@ Missing or invalid `view` values show the accounts overview. A transfer can targ
 
 ## Active APIs
 
-- `POST /api/customers` and `POST /api/login` register and authenticate customers.
+- `POST /api/customers` registers customers. `POST /api/login` sets the browser cookie and returns a safe profile plus an opaque bearer token for integration tests.
 - `GET /api/session` restores the authenticated safe profile; `POST /api/logout` revokes the current session.
 - `PUT /api/profile` updates the authenticated customer's required first name, last name, and address.
 - `GET|POST /api/accounts` list and create accounts for the authenticated customer.
@@ -62,9 +62,11 @@ Missing or invalid `view` values show the accounts overview. A transfer can targ
 - `GET|PUT /api/test-controls/delay` reads or replaces the shared delay range; `POST /api/test-controls/delay/sample` reserves one short-lived API-delay sample for the next request.
 - `GET /docs/` serves a browser-friendly Swagger UI; `GET /docs` redirects to it, and `GET /docs/openapi.json` keeps serving the active OpenAPI 3.0 JSON contract.
 
-Open `/docs/` on the configured backend origin; with the copied development environment, that is [http://localhost:4000/docs/](http://localhost:4000/docs/). (`server.js` falls back to port `3001` only when `PORT` is unset.) The UI uses locally bundled open-source assets and the existing JSON contract, so it requires no paid service or CDN. Its standard **Try it out** flow sends same-origin cookies: log in through `POST /api/login`, then the browser stores and sends the HttpOnly session cookie automatically without exposing or preloading the token in the page.
+Open `/docs/` on the configured backend origin; with the copied development environment, that is [http://localhost:4000/docs/](http://localhost:4000/docs/). (`server.js` falls back to port `3001` only when `PORT` is unset.) The UI uses locally bundled open-source assets and the existing JSON contract, so it requires no paid service or CDN. Log in through `POST /api/login`, then either let the browser send its HttpOnly cookie or copy the returned `accessToken` into Swagger's **Authorize** dialog as the bearer value. Swagger does not persist authorization across reloads.
 
-Authentication uses an opaque `eb_session` HttpOnly cookie. Only a SHA-256 token hash is stored in SQLite; the browser keeps no token or trusted profile in Web Storage. Sessions have configurable idle and absolute expiry, logout revokes only the current session, and protected APIs derive customer identity from the verified session. Cookie-authenticated mutations require either an exact configured frontend `Origin` or the exact protocol, host, and port serving the API (used by same-origin Swagger UI). Credentialed CORS remains limited to configured frontend origins. The design is deliberately scoped to this test-tool demo and does not add OAuth, MFA, or production session infrastructure.
+Protected APIs accept the same opaque session through either `Authorization: Bearer <accessToken>` or the `eb_session` HttpOnly cookie. Only a SHA-256 token hash is stored in SQLite; the React app keeps no token or trusted profile in Web Storage and continues using the cookie. An explicit Authorization header is authoritative, so a bad bearer value returns `401` even if a valid cookie is also present. Protected `401` responses include `WWW-Authenticate`. Bearer-authenticated mutations do not require a browser `Origin`; cookie-authenticated mutations still require an exact trusted or same-server origin. Logout revokes only the selected session and does not clear an unrelated cookie when bearer authentication was selected.
+
+The 11 endpoints with required request bodies require `Content-Type: application/json`; `application/json; charset=utf-8` is also accepted. Missing or unsupported media types return a stable JSON `415`. Bodyless actions such as logout and card state changes, and all GET requests, do not require Content-Type. Malformed JSON remains `400`.
 
 See [backend/README.md](backend/README.md) for backend details and [docs/CURRENT_FUNCTIONS_AND_APIS.md](docs/CURRENT_FUNCTIONS_AND_APIS.md) for the function-to-API table.
 

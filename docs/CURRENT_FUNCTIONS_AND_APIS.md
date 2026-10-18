@@ -1,15 +1,15 @@
 # Banking functions and APIs
 
-Last reviewed: 16 October 2026
+Last reviewed: 19 October 2026
 
-API paths are case-sensitive. Protected APIs derive identity only from the verified opaque `eb_session` HttpOnly cookie; they do not accept a customer identity in the URL or request body.
+API paths are case-sensitive. Protected APIs derive identity only from a verified opaque session supplied by `Authorization: Bearer <token>` or the `eb_session` HttpOnly cookie; they do not accept customer identity in the URL or request body. An explicit Authorization header is authoritative.
 
 ## Customer functions
 
 | # | Function | Description | Related API | Status |
 | ---: | --- | --- | --- | --- |
 | 1 | Create a customer | Registers normalized customer data and stores a bcrypt password hash. Duplicate emails are rejected. | `POST /api/customers` | **Implemented** |
-| 2 | Login | Authenticates an active customer, updates `lastLoginAt`, creates a hashed server-side session, sets `eb_session`, and returns a non-sensitive profile. | `POST /api/login` | **Implemented** |
+| 2 | Login | Authenticates an active customer, updates `lastLoginAt`, creates a hashed server-side session, sets `eb_session`, and returns `{ customer, accessToken, tokenType, expiresAt }` without permitting caching. | `POST /api/login` | **Implemented** |
 | 3 | Navigate the dashboard | Uses a top status banner, grouped left menu, and middle content region. The menu has Accounts, Cards, Payments, Transfer, Profile, and Test Controls destinations. Query-backed views preserve active state; missing or invalid views fall back to accounts, and `/welcome` redirects to the dashboard for compatibility. | Frontend routes under `/dashboard?view=...`, including `accounts`, `new-account`, `new-joint-account`, `cards`, `payments`, `transfer`, `schedule-transfer`, `scheduled-transfers`, `profile`, and `delay-simulator` | **Implemented** |
 | 4 | Create an account | Creates an `EVERYDAY`, `SAVINGS`, or `BUSINESS` AUD account for the authenticated customer. | `POST /api/accounts` | **Implemented** |
 | 5 | View accounts | Lists all personal and joint accounts owned by the authenticated active customer. | `GET /api/accounts` | **Implemented** |
@@ -20,7 +20,7 @@ API paths are case-sensitive. Protected APIs derive identity only from the verif
 | 10 | Create a joint account | Creates one account shared by the authenticated customer and a different active registered customer resolved by normalized email. | `POST /api/joint-accounts` | **Implemented** |
 | 11 | View and use a joint account | Both owners see the full shared balance and history and may transfer from the same account. Joint ownership does not add a fourth account product type or require approval. | Account list, transaction history, and transfer APIs | **Implemented** |
 | 12 | Restore a session | Verifies the HttpOnly cookie, enforces idle/absolute expiry and active-customer status, refreshes `lastSeenAt`, and returns the safe profile. | `GET /api/session` | **Implemented** |
-| 13 | Log out | Revokes only the current server session, clears the cookie, and returns to login. | `POST /api/logout` | **Implemented** |
+| 13 | Log out | Revokes only the selected server session, clears a matching cookie without clearing an unrelated browser session, and returns the React client to login. | `POST /api/logout` | **Implemented** |
 | 14 | Update personal information | Updates required first name, last name, and address for the authenticated customer and refreshes the in-memory dashboard profile. | `PUT /api/profile`, `/dashboard?view=profile` | **Implemented** |
 | 15 | Schedule a transfer | Creates a private one-time future transfer from a picker-only local date/time. Funds are checked but not reserved; due processing rechecks rules and records `COMPLETED` or side-effect-free `FAILED`. | `GET\|POST /api/scheduled-transfers`, schedule dashboard views | **Implemented** |
 | 16 | Manage demo debit cards | Opens holder-specific cards on personally or jointly owned accounts, creates exactly five display-only samples, and supports temporary lock/unlock or permanent disable. | Card APIs, `/dashboard?view=cards` | **Implemented** |
@@ -45,10 +45,10 @@ API paths are case-sensitive. Protected APIs derive identity only from the verif
 | Method | API | Success | Main failures |
 | --- | --- | --- | --- |
 | `POST` | `/api/customers` | `201` safe customer profile | `400` validation, `409` duplicate email |
-| `POST` | `/api/login` | `200` safe customer profile | `400` missing fields, `401` invalid credentials |
+| `POST` | `/api/login` | `200` safe customer and opaque bearer-token envelope plus HttpOnly cookie | `400` missing fields, `401` invalid credentials, `415` unsupported Content-Type |
 | `GET` | `/api/session` | `200` safe customer profile | `401` missing, malformed, unknown, expired, or inactive session |
 | `PUT` | `/api/profile` | `200` updated safe customer profile | `400` invalid fields, `401` authentication, `403` untrusted origin |
-| `POST` | `/api/logout` | `204` and cleared cookie | `401` invalid/replayed session, `403` untrusted origin |
+| `POST` | `/api/logout` | `204`, with a matching cookie cleared when present | `401` invalid/replayed session, `403` untrusted cookie-authenticated origin |
 | `GET` | `/api/accounts` | `200` `{ "accounts": [...] }` | `401` authentication required |
 | `POST` | `/api/accounts` | `201` created account | `400` invalid type/name, `401` authentication required, `403` untrusted origin |
 | `POST` | `/api/joint-accounts` | `201` one shared account with two safe owners | `400` invalid input, `401` authentication required, `403` untrusted origin, `404` missing co-owner, `409` inactive owner |
@@ -67,7 +67,9 @@ API paths are case-sensitive. Protected APIs derive identity only from the verif
 | `GET` | `/docs`, `/docs/` | `308` canonical redirect or `200` Swagger UI | None defined |
 | `GET` | `/docs/openapi.json` | `200` OpenAPI JSON | None defined |
 
-Swagger **Try it out** uses the API's serving origin and browser-managed HttpOnly session cookie. Login sets the cookie; the UI does not read or preload it. Mutating calls still require an exact configured frontend origin or an exact match to the API request's protocol, host, and port. Credentialed CORS is not broadened.
+Swagger **Try it out** can use the API's browser-managed HttpOnly session cookie or the OpenAPI bearer **Authorize** control. Login sets the cookie and returns the same opaque session token for non-browser integration testing; the React UI consumes only `customer` and never stores or renders the token. Bearer-authenticated protected mutations bypass Origin checks, while cookie-authenticated and public mutations still require an exact configured frontend origin or an exact match to the API request's protocol, host, and port. Credentialed CORS allows `Authorization`, `Content-Type`, and `X-Test-Delay-Ticket` from configured frontend origins.
+
+All 11 operations with required request bodies require `application/json` (optionally with a UTF-8 charset) and document JSON `415` errors. GETs and bodyless actions do not require Content-Type. Protected `401` responses include `WWW-Authenticate: Bearer realm="express-bank"`; malformed JSON continues to return `400`.
 
 The delay control is intentionally process-local and public for deterministic API/UI test scripts. PUT requires all three fields and rejects invalid input without changing the active setting. Reset writes `0`–`0` seconds while retaining the active scope. Each eligible event independently samples an inclusive whole-number value. A sampled ticket is opaque, short-lived, and single-use; send it as `X-Test-Delay-Ticket` and inspect `X-Test-Delay-Seconds` on the ordinary API response. Invalid, expired, or replayed tickets return `400`. External setting changes appear in the dashboard after reload or explicit refresh; there is no polling.
 

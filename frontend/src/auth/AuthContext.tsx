@@ -16,6 +16,13 @@ type AuthContextValue = AuthState & {
   updateProfile: (profile: Pick<CustomerProfile, 'firstName' | 'lastName' | 'address'>) => Promise<CustomerProfile>;
 };
 
+interface LoginResponse {
+  customer: CustomerProfile;
+  accessToken: string;
+  tokenType: 'Bearer';
+  expiresAt: string;
+}
+
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 export function AuthProvider({ children, initialState }: { children: ReactNode; initialState?: AuthState }) {
@@ -47,7 +54,7 @@ export function AuthProvider({ children, initialState }: { children: ReactNode; 
   }, [initialState, loadSession]);
 
   const login = useCallback(async (email: string, password: string) => {
-    const customer = await apiRequest<CustomerProfile>('/api/login', {
+    const { customer } = await apiRequest<LoginResponse>('/api/login', {
       method: 'POST',
       body: JSON.stringify({ email, password }),
     });

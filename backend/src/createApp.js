@@ -13,6 +13,7 @@ const { getPrismaClient } = require('./lib/prisma');
 const { getSessionConfig, getFrontendOrigins } = require('./config/sessionConfig');
 const { createAuthenticateMiddleware } = require('./middleware/authenticate');
 const { createTrustedOriginMiddleware } = require('./middleware/trustedOrigin');
+const { requireJsonContentType } = require('./middleware/requireJsonContentType');
 const { createApiDelayMiddleware } = require('./middleware/apiDelay');
 const { createDelayService } = require('./services/delayService');
 const { readSessionCookie, serializeSessionCookie, serializeClearedSessionCookie } = require('./http/sessionCookie');
@@ -29,6 +30,7 @@ const SWAGGER_UI_OPTIONS = {
   },
 };
 const DELAY_SETTING_VALIDATION_ERROR = 'Provide exactly minSeconds and maxSeconds as integers from 0 to 60, with minSeconds no greater than maxSeconds, and scope as API, UI, or BOTH.';
+const CORS_ALLOWED_HEADERS = Object.freeze(['Authorization', 'Content-Type', 'X-Test-Delay-Ticket']);
 
 const defaultLogger = {
   info: (...args) => console.log(...args),
@@ -97,7 +99,7 @@ function createApp({
   app.use(cors({
     origin: (origin, callback) => resolveCorsOrigin(origin, callback, frontendOrigins),
     credentials: true,
-    allowedHeaders: ['Content-Type', 'X-Test-Delay-Ticket'],
+    allowedHeaders: CORS_ALLOWED_HEADERS,
     exposedHeaders: ['X-Test-Delay-Seconds'],
   }));
   app.use(express.json());
@@ -107,7 +109,7 @@ function createApp({
     res.json(delayService.getDelaySetting());
   });
 
-  app.put('/api/test-controls/delay', trustedOrigin, (req, res) => {
+  app.put('/api/test-controls/delay', trustedOrigin, requireJsonContentType, (req, res) => {
     const saved = delayService.setDelaySetting(req.body);
     if (!saved) {
       return res.status(400).json({ error: DELAY_SETTING_VALIDATION_ERROR });
@@ -126,7 +128,7 @@ function createApp({
     cancel: delayCancel,
   }));
 
-  app.post('/api/login', trustedOrigin, async (req, res) => {
+  app.post('/api/login', trustedOrigin, requireJsonContentType, async (req, res) => {
     const { email, password } = req.body ?? {};
 
     if (!email || !password) {
@@ -154,15 +156,22 @@ function createApp({
         new Date(),
         isProduction,
       ));
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+      res.setHeader('Pragma', 'no-cache');
       logger.info(`Customer ${customer.id} authenticated successfully.`);
-      return res.json(customer);
+      return res.json({
+        customer,
+        accessToken: created.token,
+        tokenType: 'Bearer',
+        expiresAt: created.session.absoluteExpiresAt.toISOString(),
+      });
     } catch (error) {
       logger.error('Failed to authenticate customer', error);
       return res.status(500).json({ error: 'Internal server error.' });
     }
   });
 
-  app.post('/api/customers', trustedOrigin, async (req, res) => {
+  app.post('/api/customers', trustedOrigin, requireJsonContentType, async (req, res) => {
     try {
       const customer = await resolvedServices.createCustomer(req.body);
       return res.status(201).json(customer);
@@ -175,7 +184,7 @@ function createApp({
     res.json(req.auth.customer);
   });
 
-  app.put('/api/profile', authenticate, trustedOrigin, async (req, res) => {
+  app.put('/api/profile', authenticate, trustedOrigin, requireJsonContentType, async (req, res) => {
     try {
       return res.json(await resolvedServices.updateProfile(req.auth.customer.id, req.body));
     } catch (error) {
@@ -186,14 +195,16 @@ function createApp({
   app.post('/api/logout', authenticate, trustedOrigin, async (req, res) => {
     try {
       await resolvedServices.deleteSession(req.auth.session.id);
-      res.setHeader('Set-Cookie', serializeClearedSessionCookie(isProduction));
+      if (req.auth.cookieMatchesSession) {
+        res.setHeader('Set-Cookie', serializeClearedSessionCookie(isProduction));
+      }
       return res.status(204).send();
     } catch (error) {
       return handleApiError(error, res, logger, 'Failed to log out');
     }
   });
 
-  app.post('/api/accounts', authenticate, trustedOrigin, async (req, res) => {
+  app.post('/api/accounts', authenticate, trustedOrigin, requireJsonContentType, async (req, res) => {
     try {
       const account = await resolvedServices.createAccount(req.auth.customer.id, req.body);
       return res.status(201).json(account);
@@ -202,7 +213,7 @@ function createApp({
     }
   });
 
-  app.post('/api/joint-accounts', authenticate, trustedOrigin, async (req, res) => {
+  app.post('/api/joint-accounts', authenticate, trustedOrigin, requireJsonContentType, async (req, res) => {
     try {
       const account = await resolvedServices.createJointAccount(req.auth.customer.id, req.body);
       return res.status(201).json(account);
@@ -220,7 +231,7 @@ function createApp({
     }
   });
 
-  app.post('/api/transfers', authenticate, trustedOrigin, async (req, res) => {
+  app.post('/api/transfers', authenticate, trustedOrigin, requireJsonContentType, async (req, res) => {
     try {
       const transfer = await resolvedServices.transferMoney({
         sourceAccountId: req.body?.sourceAccountId,
@@ -235,7 +246,7 @@ function createApp({
     }
   });
 
-  app.post('/api/payments/resolve', authenticate, trustedOrigin, async (req, res) => {
+  app.post('/api/payments/resolve', authenticate, trustedOrigin, requireJsonContentType, async (req, res) => {
     try {
       return res.json(await resolvedServices.resolvePayment(req.auth.customer.id, req.body ?? {}));
     } catch (error) {
@@ -243,7 +254,7 @@ function createApp({
     }
   });
 
-  app.post('/api/payments', authenticate, trustedOrigin, async (req, res) => {
+  app.post('/api/payments', authenticate, trustedOrigin, requireJsonContentType, async (req, res) => {
     try {
       return res.status(201).json(await resolvedServices.createPayment(req.auth.customer.id, req.body ?? {}));
     } catch (error) {
@@ -251,7 +262,7 @@ function createApp({
     }
   });
 
-  app.post('/api/scheduled-transfers', authenticate, trustedOrigin, async (req, res) => {
+  app.post('/api/scheduled-transfers', authenticate, trustedOrigin, requireJsonContentType, async (req, res) => {
     try {
       const schedule = await resolvedServices.createScheduledTransfer(req.auth.customer.id, req.body);
       return res.status(201).json(schedule);
@@ -276,7 +287,7 @@ function createApp({
     }
   });
 
-  app.post('/api/cards', authenticate, trustedOrigin, async (req, res) => {
+  app.post('/api/cards', authenticate, trustedOrigin, requireJsonContentType, async (req, res) => {
     try {
       return res.status(201).json(await resolvedServices.createCard(req.auth.customer.id, req.body));
     } catch (error) {
@@ -379,5 +390,6 @@ module.exports = {
   handleApiError,
   handleUnhandledApiError,
   DELAY_SETTING_VALIDATION_ERROR,
+  CORS_ALLOWED_HEADERS,
   SWAGGER_UI_OPTIONS,
 };

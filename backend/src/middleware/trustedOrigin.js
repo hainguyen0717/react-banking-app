@@ -29,6 +29,7 @@ function getRequestOrigin(req) {
 function createTrustedOriginMiddleware(frontendOrigins) {
   return (req, res, next) => {
     if (req.method === 'OPTIONS' || !MUTATION_METHODS.has(req.method)) return next();
+    if (req.auth?.method === 'bearer') return next();
     const origin = parseExactHttpOrigin(req.headers.origin);
     const sameOrigin = origin !== null && origin === getRequestOrigin(req);
     if (origin === null || (!frontendOrigins.has(origin) && !sameOrigin)) {

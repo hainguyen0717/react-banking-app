@@ -23,6 +23,10 @@ Open `/docs/` on the configured backend origin; with the copied development envi
 
 Standard **Try it out** requests use the serving origin and include browser credentials. Run `POST /api/login` first and the browser will retain the returned HttpOnly `eb_session` cookie for later protected calls. The UI does not read, embed, or persist the cookie, password, or authorization value. Existing authentication, ownership, validation, `401`/`403`, and trusted-origin behavior still applies.
 
+Login also returns `{ customer, accessToken, tokenType: "Bearer", expiresAt }` with `Cache-Control: no-store, no-cache, must-revalidate` and `Pragma: no-cache`. Integration tests may send `Authorization: Bearer <accessToken>` to any protected endpoint, or paste the token into Swagger's **Authorize** dialog. The value is the existing opaque session token, not a JWT. If an Authorization header is present it is authoritative; malformed, unknown, expired, or revoked bearer credentials return `401` with `WWW-Authenticate` and never fall back to a cookie.
+
+Bearer-authenticated protected mutations bypass browser Origin checks. Cookie-authenticated mutations and public mutation controls retain the trusted-origin requirement. Login and the other ten operations with required JSON bodies require `Content-Type: application/json` (an optional UTF-8 charset is accepted); unsupported or missing media types return JSON `415`, while malformed JSON remains `400`.
+
 ## Test delay simulator
 
 `GET /api/test-controls/delay` returns the current shared range and `PUT /api/test-controls/delay` atomically replaces it with a complete payload such as `{ "minSeconds": 2, "maxSeconds": 5, "scope": "BOTH" }`. Both bounds must be whole numbers from 0 through 60, minimum must not exceed maximum, and scope must be `API`, `UI`, or `BOTH`. The endpoints are intentionally public for test scripts; PUT still requires a trusted `Origin`. Reset writes a `0`–`0` range while retaining the active scope.
@@ -61,10 +65,10 @@ SQLite `CHECK` constraints enforce the three account types, valid `SINGLE`/`JOIN
 | Method | Path | Purpose |
 | --- | --- | --- |
 | `POST` | `/api/customers` | Register a customer with a bcrypt password hash. |
-| `POST` | `/api/login` | Authenticate and return a non-sensitive customer profile. |
+| `POST` | `/api/login` | Authenticate, set the session cookie, and return a safe profile plus the opaque bearer token. |
 | `GET` | `/api/session` | Restore the current authenticated safe customer profile. |
 | `PUT` | `/api/profile` | Update required personal name and address fields. |
-| `POST` | `/api/logout` | Revoke the current session and clear its cookie. |
+| `POST` | `/api/logout` | Revoke the selected session and clear a matching cookie without clearing an unrelated one. |
 | `GET` | `/api/accounts` | List accounts primarily or jointly owned by the authenticated customer. |
 | `POST` | `/api/accounts` | Create an AUD account for the authenticated customer. |
 | `POST` | `/api/joint-accounts` | Create one account shared with a different active customer identified by registered email. |
@@ -84,7 +88,7 @@ SQLite `CHECK` constraints enforce the three account types, valid `SINGLE`/`JOIN
 | `GET` | `/docs`, `/docs/` | Redirect to or render the public Swagger UI. |
 | `GET` | `/docs/openapi.json` | Return the active OpenAPI 3.0 contract. |
 
-Protected routes derive the actor exclusively from the verified `eb_session` cookie. Client path/body identity is not accepted. Account response `customerId` remains creator/legacy metadata; `owners` is the complete safe owner set, and either joint owner is authorized. Missing or invalid authentication is `401`; authenticated cross-owner access and untrusted mutation origins are `403`.
+Protected routes derive the actor exclusively from a verified session supplied by bearer header or `eb_session` cookie. Client path/body identity is not accepted. Account response `customerId` remains creator/legacy metadata; `owners` is the complete safe owner set, and either joint owner is authorized. Missing or invalid authentication is `401`; authenticated cross-owner access and untrusted cookie-mutation origins are `403`.
 
 API errors use `{ "error": "Human-readable message" }`. Payments and transfers return `400` for invalid input/self-payment, `403` for unowned resources or untrusted origin, `404` for missing records, and `409` for insufficient funds.
 

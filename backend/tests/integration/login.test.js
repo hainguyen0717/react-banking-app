@@ -87,7 +87,7 @@ test('POST /api/login rejects invalid credentials', async () => {
   });
 });
 
-test('POST /api/login returns customer profile when authentication succeeds', async () => {
+test('POST /api/login returns the customer and bearer session envelope when authentication succeeds', async () => {
   const logger = createTestLogger();
   const expectedCustomer = { id: '123', firstName: 'Ada', lastName: 'Lovelace' };
   const app = createApp({
@@ -112,8 +112,16 @@ test('POST /api/login returns customer profile when authentication succeeds', as
 
     const body = await response.json();
     assert.equal(response.status, 200);
-    assert.deepEqual(body, expectedCustomer);
+    assert.deepEqual(body, {
+      customer: expectedCustomer,
+      accessToken: 'A'.repeat(43),
+      tokenType: 'Bearer',
+      expiresAt: body.expiresAt,
+    });
+    assert.ok(Date.parse(body.expiresAt));
     assert.match(response.headers.get('set-cookie'), /^eb_session=/);
+    assert.equal(response.headers.get('cache-control'), 'no-store, no-cache, must-revalidate');
+    assert.equal(response.headers.get('pragma'), 'no-cache');
     assert(logger.entries.some((entry) => entry.message.includes('authenticated successfully')));
   });
 });

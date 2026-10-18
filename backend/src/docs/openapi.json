@@ -2,8 +2,8 @@
   "openapi": "3.0.3",
   "info": {
     "title": "Express Bank Demo API",
-    "version": "5.2.0",
-    "description": "Deterministic customer profile, opaque-session, account, immediate/scheduled transfer, Payments (bank account, email PayID and BPAY), demo card, and test-delay APIs. Protected actor identity is derived exclusively from the eb_session HttpOnly cookie. Cookie-authenticated mutations and public delay-control mutations require a configured trusted Origin. Ordinary /api requests may send a short-lived, single-use X-Test-Delay-Ticket reserved by the sample control; their responses expose the applied value in X-Test-Delay-Seconds. Unticketed ordinary requests sample directly at middleware entry."
+    "version": "5.3.0",
+    "description": "Deterministic customer profile, opaque-session, account, immediate/scheduled transfer, Payments (bank account, email PayID and BPAY), demo card, and test-delay APIs. Protected actor identity is derived from a verified opaque session supplied either as Authorization: Bearer <token> or as the eb_session HttpOnly cookie. An explicit Authorization header is authoritative. Bearer-authenticated mutations are suitable for non-browser integration tests and bypass browser Origin checks; cookie-authenticated mutations and public delay-control mutations require a configured trusted Origin. Operations with required JSON bodies require Content-Type: application/json (an optional UTF-8 charset is accepted)."
   },
   "servers": [
     {
@@ -22,10 +22,11 @@
           "content": { "application/json": { "schema": { "$ref": "#/components/schemas/LoginRequest" } } }
         },
         "responses": {
-          "200": { "description": "Customer profile and opaque session cookie", "headers": { "Set-Cookie": { "schema": { "type": "string", "example": "eb_session=opaque; Path=/; HttpOnly; SameSite=Lax" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Customer" } } } },
+          "200": { "description": "Safe customer profile plus the same opaque session token in a bearer-friendly response envelope and HttpOnly cookie", "headers": { "Set-Cookie": { "schema": { "type": "string", "example": "eb_session=opaque; Path=/; HttpOnly; SameSite=Lax" } }, "Cache-Control": { "schema": { "type": "string", "example": "no-store, no-cache, must-revalidate" } }, "Pragma": { "schema": { "type": "string", "example": "no-cache" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/LoginResponse" } } } },
           "400": { "$ref": "#/components/responses/Error" },
           "401": { "$ref": "#/components/responses/Error" },
-          "403": { "$ref": "#/components/responses/Error" }
+          "403": { "$ref": "#/components/responses/Error" },
+          "415": { "$ref": "#/components/responses/UnsupportedMediaType" }
         }
       }
     },
@@ -42,7 +43,8 @@
           "201": { "description": "Customer created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Customer" } } } },
           "400": { "$ref": "#/components/responses/Error" },
           "403": { "$ref": "#/components/responses/Error" },
-          "409": { "$ref": "#/components/responses/Error" }
+          "409": { "$ref": "#/components/responses/Error" },
+          "415": { "$ref": "#/components/responses/UnsupportedMediaType" }
         }
       }
     },
@@ -50,21 +52,21 @@
       "get": {
         "summary": "Return the authenticated safe customer profile and refresh idle activity",
         "tags": ["Sessions"],
-        "security": [{ "cookieAuth": [] }],
+        "security": [{ "bearerAuth": [] }, { "cookieAuth": [] }],
         "responses": {
           "200": { "description": "Authenticated customer profile", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Customer" } } } },
-          "401": { "$ref": "#/components/responses/Error" }
+          "401": { "$ref": "#/components/responses/Unauthorized" }
         }
       }
     },
     "/api/logout": {
       "post": {
-        "summary": "Revoke only the current session and clear its cookie",
+        "summary": "Revoke only the selected session and clear a matching cookie",
         "tags": ["Sessions"],
-        "security": [{ "cookieAuth": [] }],
+        "security": [{ "bearerAuth": [] }, { "cookieAuth": [] }],
         "responses": {
-          "204": { "description": "Current session revoked", "headers": { "Set-Cookie": { "schema": { "type": "string" } } } },
-          "401": { "$ref": "#/components/responses/Error" },
+          "204": { "description": "Selected session revoked. A matching browser cookie is cleared; an unrelated cookie is left intact.", "headers": { "Set-Cookie": { "description": "Present only when the request carried a cookie for the selected session.", "schema": { "type": "string" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
           "403": { "$ref": "#/components/responses/Error" }
         }
       }
@@ -72,9 +74,9 @@
     "/api/profile": {
       "put": {
         "summary": "Update the authenticated customer's personal information",
-        "tags": ["Customers"], "security": [{ "cookieAuth": [] }],
+        "tags": ["Customers"], "security": [{ "bearerAuth": [] }, { "cookieAuth": [] }],
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/UpdateProfileRequest" } } } },
-        "responses": { "200": { "description": "Updated safe profile", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Customer" } } } }, "400": { "$ref": "#/components/responses/Error" }, "401": { "$ref": "#/components/responses/Error" }, "403": { "$ref": "#/components/responses/Error" } }
+        "responses": { "200": { "description": "Updated safe profile", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Customer" } } } }, "400": { "$ref": "#/components/responses/Error" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Error" }, "415": { "$ref": "#/components/responses/UnsupportedMediaType" } }
       }
     },
     "/api/accounts": {
@@ -82,10 +84,10 @@
         "summary": "List a customer's personal and jointly owned accounts",
         "description": "Each shared account is returned once with the same ID, balance, owners, and history for either owner.",
         "tags": ["Accounts"],
-        "security": [{ "cookieAuth": [] }],
+        "security": [{ "bearerAuth": [] }, { "cookieAuth": [] }],
         "responses": {
           "200": { "description": "Account list", "content": { "application/json": { "schema": { "type": "object", "required": ["accounts"], "properties": { "accounts": { "type": "array", "items": { "$ref": "#/components/schemas/Account" } } } } } } },
-          "401": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
           "404": { "$ref": "#/components/responses/Error" },
           "409": { "$ref": "#/components/responses/Error" }
         }
@@ -93,7 +95,7 @@
       "post": {
         "summary": "Create an AUD deposit account with the configured opening balance",
         "tags": ["Accounts"],
-        "security": [{ "cookieAuth": [] }],
+        "security": [{ "bearerAuth": [] }, { "cookieAuth": [] }],
         "requestBody": {
           "required": true,
           "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateAccountRequest" } } }
@@ -101,10 +103,11 @@
         "responses": {
           "201": { "description": "Account created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Account" } } } },
           "400": { "$ref": "#/components/responses/Error" },
-          "401": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
           "403": { "$ref": "#/components/responses/Error" },
           "404": { "$ref": "#/components/responses/Error" },
-          "409": { "$ref": "#/components/responses/Error" }
+          "409": { "$ref": "#/components/responses/Error" },
+          "415": { "$ref": "#/components/responses/UnsupportedMediaType" }
         }
       }
     },
@@ -113,7 +116,7 @@
         "summary": "Create one joint AUD account shared by two active registered customers",
         "description": "The server resolves the co-owner by normalized email and applies the configured opening balance once. Both owners receive equal view and transfer access immediately; no invitation step is used.",
         "tags": ["Accounts"],
-        "security": [{ "cookieAuth": [] }],
+        "security": [{ "bearerAuth": [] }, { "cookieAuth": [] }],
         "requestBody": {
           "required": true,
           "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateJointAccountRequest" } } }
@@ -121,10 +124,11 @@
         "responses": {
           "201": { "description": "Joint account created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Account" } } } },
           "400": { "$ref": "#/components/responses/Error" },
-          "401": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
           "403": { "$ref": "#/components/responses/Error" },
           "404": { "$ref": "#/components/responses/Error" },
-          "409": { "$ref": "#/components/responses/Error" }
+          "409": { "$ref": "#/components/responses/Error" },
+          "415": { "$ref": "#/components/responses/UnsupportedMediaType" }
         }
       }
     },
@@ -132,7 +136,7 @@
       "post": {
         "summary": "Atomically transfer AUD cents between accounts",
         "tags": ["Transfers"],
-        "security": [{ "cookieAuth": [] }],
+        "security": [{ "bearerAuth": [] }, { "cookieAuth": [] }],
         "requestBody": {
           "required": true,
           "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateTransferRequest" } } }
@@ -140,10 +144,11 @@
         "responses": {
           "201": { "description": "Transfer completed", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Transfer" } } } },
           "400": { "$ref": "#/components/responses/Error" },
-          "401": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
           "403": { "$ref": "#/components/responses/Error" },
           "404": { "$ref": "#/components/responses/Error" },
-          "409": { "$ref": "#/components/responses/Error" }
+          "409": { "$ref": "#/components/responses/Error" },
+          "415": { "$ref": "#/components/responses/UnsupportedMediaType" }
         }
       }
     },
@@ -152,15 +157,16 @@
         "summary": "Resolve and validate an immediate AUD payment for review",
         "description": "Passive validation only; no balances or records change. PayID responses contain the normalized PayID and safe display name, never its mapped account.",
         "tags": ["Payments"],
-        "security": [{ "cookieAuth": [] }],
+        "security": [{ "bearerAuth": [] }, { "cookieAuth": [] }],
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PaymentRequest" } } } },
         "responses": {
           "200": { "description": "Safe payment review", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PaymentResolution" } } } },
           "400": { "$ref": "#/components/responses/Error" },
-          "401": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
           "403": { "$ref": "#/components/responses/Error" },
           "404": { "$ref": "#/components/responses/Error" },
-          "409": { "$ref": "#/components/responses/Error" }
+          "409": { "$ref": "#/components/responses/Error" },
+          "415": { "$ref": "#/components/responses/UnsupportedMediaType" }
         }
       }
     },
@@ -169,15 +175,16 @@
         "summary": "Confirm an immediate AUD payment",
         "description": "Re-resolves the destination and authorization inside the confirmation transaction. Bank-account and PayID payments debit and credit internal accounts atomically; BPAY records a source-only debit. The immutable response is the receipt.",
         "tags": ["Payments"],
-        "security": [{ "cookieAuth": [] }],
+        "security": [{ "bearerAuth": [] }, { "cookieAuth": [] }],
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PaymentRequest" } } } },
         "responses": {
           "201": { "description": "Payment receipt", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PaymentReceipt" } } } },
           "400": { "$ref": "#/components/responses/Error" },
-          "401": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
           "403": { "$ref": "#/components/responses/Error" },
           "404": { "$ref": "#/components/responses/Error" },
-          "409": { "$ref": "#/components/responses/Error" }
+          "409": { "$ref": "#/components/responses/Error" },
+          "415": { "$ref": "#/components/responses/UnsupportedMediaType" }
         }
       }
     },
@@ -185,13 +192,13 @@
       "get": {
         "summary": "List transfers for a personal or jointly owned account, newest first",
         "tags": ["Transfers"],
-        "security": [{ "cookieAuth": [] }],
+        "security": [{ "bearerAuth": [] }, { "cookieAuth": [] }],
         "parameters": [
           { "in": "path", "name": "accountId", "required": true, "schema": { "type": "string", "format": "uuid" } }
         ],
         "responses": {
           "200": { "description": "Directional transaction history", "content": { "application/json": { "schema": { "type": "object", "required": ["transactions"], "properties": { "transactions": { "type": "array", "items": { "$ref": "#/components/schemas/Transaction" } } } } } } },
-          "401": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
           "403": { "$ref": "#/components/responses/Error" },
           "404": { "$ref": "#/components/responses/Error" }
         }
@@ -199,30 +206,30 @@
     },
     "/api/scheduled-transfers": {
       "get": {
-        "summary": "List the authenticated customer's scheduled transfers", "tags": ["Transfers"], "security": [{ "cookieAuth": [] }],
-        "responses": { "200": { "description": "Customer-private schedule list", "content": { "application/json": { "schema": { "type": "object", "properties": { "scheduledTransfers": { "type": "array", "items": { "$ref": "#/components/schemas/ScheduledTransfer" } } } } } } }, "401": { "$ref": "#/components/responses/Error" } }
+        "summary": "List the authenticated customer's scheduled transfers", "tags": ["Transfers"], "security": [{ "bearerAuth": [] }, { "cookieAuth": [] }],
+        "responses": { "200": { "description": "Customer-private schedule list", "content": { "application/json": { "schema": { "type": "object", "properties": { "scheduledTransfers": { "type": "array", "items": { "$ref": "#/components/schemas/ScheduledTransfer" } } } } } } }, "401": { "$ref": "#/components/responses/Unauthorized" } }
       },
       "post": {
-        "summary": "Schedule a one-time future transfer without reserving funds", "tags": ["Transfers"], "security": [{ "cookieAuth": [] }],
+        "summary": "Schedule a one-time future transfer without reserving funds", "tags": ["Transfers"], "security": [{ "bearerAuth": [] }, { "cookieAuth": [] }],
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateScheduledTransferRequest" } } } },
-        "responses": { "201": { "description": "Pending transfer schedule", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ScheduledTransfer" } } } }, "400": { "$ref": "#/components/responses/Error" }, "401": { "$ref": "#/components/responses/Error" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" } }
+        "responses": { "201": { "description": "Pending transfer schedule", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ScheduledTransfer" } } } }, "400": { "$ref": "#/components/responses/Error" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" }, "415": { "$ref": "#/components/responses/UnsupportedMediaType" } }
       }
     },
     "/api/cards": {
-      "get": { "summary": "List holder-owned demo debit cards", "tags": ["Cards"], "security": [{ "cookieAuth": [] }], "responses": { "200": { "description": "Cards with five display-only sample transactions each" }, "401": { "$ref": "#/components/responses/Error" } } },
-      "post": { "summary": "Open a demo debit card linked to an owned account", "tags": ["Cards"], "security": [{ "cookieAuth": [] }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["accountId"], "properties": { "accountId": { "type": "string", "format": "uuid" } } } } } }, "responses": { "201": { "description": "Active masked card with five sample transactions", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Card" } } } }, "400": { "$ref": "#/components/responses/Error" }, "401": { "$ref": "#/components/responses/Error" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" } } }
+      "get": { "summary": "List holder-owned demo debit cards", "tags": ["Cards"], "security": [{ "bearerAuth": [] }, { "cookieAuth": [] }], "responses": { "200": { "description": "Cards with five display-only sample transactions each" }, "401": { "$ref": "#/components/responses/Unauthorized" } } },
+      "post": { "summary": "Open a demo debit card linked to an owned account", "tags": ["Cards"], "security": [{ "bearerAuth": [] }, { "cookieAuth": [] }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["accountId"], "properties": { "accountId": { "type": "string", "format": "uuid" } } } } } }, "responses": { "201": { "description": "Active masked card with five sample transactions", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Card" } } } }, "400": { "$ref": "#/components/responses/Error" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" }, "415": { "$ref": "#/components/responses/UnsupportedMediaType" } } }
     },
     "/api/cards/{cardId}": {
-      "get": { "summary": "Get one holder-owned masked card", "tags": ["Cards"], "security": [{ "cookieAuth": [] }], "parameters": [{ "in": "path", "name": "cardId", "required": true, "schema": { "type": "string", "format": "uuid" } }], "responses": { "200": { "description": "Masked card", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Card" } } } }, "401": { "$ref": "#/components/responses/Error" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" } } }
+      "get": { "summary": "Get one holder-owned masked card", "tags": ["Cards"], "security": [{ "bearerAuth": [] }, { "cookieAuth": [] }], "parameters": [{ "in": "path", "name": "cardId", "required": true, "schema": { "type": "string", "format": "uuid" } }], "responses": { "200": { "description": "Masked card", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Card" } } } }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" } } }
     },
     "/api/cards/{cardId}/lock": {
-      "post": { "summary": "Temporarily lock an active holder-owned card", "tags": ["Cards"], "security": [{ "cookieAuth": [] }], "parameters": [{ "in": "path", "name": "cardId", "required": true, "schema": { "type": "string", "format": "uuid" } }], "responses": { "200": { "description": "Locked masked card", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Card" } } } }, "401": { "$ref": "#/components/responses/Error" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" } } }
+      "post": { "summary": "Temporarily lock an active holder-owned card", "tags": ["Cards"], "security": [{ "bearerAuth": [] }, { "cookieAuth": [] }], "parameters": [{ "in": "path", "name": "cardId", "required": true, "schema": { "type": "string", "format": "uuid" } }], "responses": { "200": { "description": "Locked masked card", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Card" } } } }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" } } }
     },
     "/api/cards/{cardId}/unlock": {
-      "post": { "summary": "Unlock a locked holder-owned card", "tags": ["Cards"], "security": [{ "cookieAuth": [] }], "parameters": [{ "in": "path", "name": "cardId", "required": true, "schema": { "type": "string", "format": "uuid" } }], "responses": { "200": { "description": "Active masked card", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Card" } } } }, "401": { "$ref": "#/components/responses/Error" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" } } }
+      "post": { "summary": "Unlock a locked holder-owned card", "tags": ["Cards"], "security": [{ "bearerAuth": [] }, { "cookieAuth": [] }], "parameters": [{ "in": "path", "name": "cardId", "required": true, "schema": { "type": "string", "format": "uuid" } }], "responses": { "200": { "description": "Active masked card", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Card" } } } }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" } } }
     },
     "/api/cards/{cardId}/disable": {
-      "post": { "summary": "Permanently disable an active or locked holder-owned card", "tags": ["Cards"], "security": [{ "cookieAuth": [] }], "parameters": [{ "in": "path", "name": "cardId", "required": true, "schema": { "type": "string", "format": "uuid" } }], "responses": { "200": { "description": "Disabled masked card", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Card" } } } }, "401": { "$ref": "#/components/responses/Error" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" } } }
+      "post": { "summary": "Permanently disable an active or locked holder-owned card", "tags": ["Cards"], "security": [{ "bearerAuth": [] }, { "cookieAuth": [] }], "parameters": [{ "in": "path", "name": "cardId", "required": true, "schema": { "type": "string", "format": "uuid" } }], "responses": { "200": { "description": "Disabled masked card", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Card" } } } }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" } } }
     },
     "/api/test-controls/delay": {
       "get": {
@@ -246,7 +253,8 @@
         "responses": {
           "200": { "description": "Saved delay setting", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DelaySetting" } } } },
           "400": { "$ref": "#/components/responses/Error" },
-          "403": { "$ref": "#/components/responses/Error" }
+          "403": { "$ref": "#/components/responses/Error" },
+          "415": { "$ref": "#/components/responses/UnsupportedMediaType" }
         }
       }
     },
@@ -317,6 +325,12 @@
       }
     },
     "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "Opaque session token",
+        "description": "Use the accessToken returned by POST /api/login. The token is opaque, is not a JWT, and represents the same revocable session as the cookie. If Authorization is supplied it is authoritative; invalid bearer credentials never fall back to a cookie."
+      },
       "cookieAuth": {
         "type": "apiKey",
         "in": "cookie",
@@ -328,6 +342,15 @@
       "Error": {
         "description": "Request rejected",
         "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } }
+      },
+      "Unauthorized": {
+        "description": "Missing, malformed, unknown, expired, revoked, or inactive authentication",
+        "headers": { "WWW-Authenticate": { "schema": { "type": "string", "example": "Bearer realm=\"express-bank\"" } } },
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } }
+      },
+      "UnsupportedMediaType": {
+        "description": "A required request body was not sent as application/json",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" }, "example": { "error": "Content-Type must be application/json." } } }
       }
     },
     "schemas": {
@@ -356,6 +379,17 @@
         "properties": {
           "email": { "type": "string", "format": "email" },
           "password": { "type": "string", "format": "password" }
+        }
+      },
+      "LoginResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["customer", "accessToken", "tokenType", "expiresAt"],
+        "properties": {
+          "customer": { "$ref": "#/components/schemas/Customer" },
+          "accessToken": { "type": "string", "description": "Opaque session token for Authorization: Bearer. It is not a JWT." },
+          "tokenType": { "type": "string", "enum": ["Bearer"] },
+          "expiresAt": { "type": "string", "format": "date-time", "description": "Absolute session expiry. Idle expiry may end the session sooner." }
         }
       },
       "CreateCustomerRequest": {

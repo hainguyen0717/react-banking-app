@@ -27,13 +27,18 @@ describe('CustomerLogin', () => {
     expect(screen.getByTestId('customer-login-register-link')).toHaveAttribute('href', '/register');
   });
 
-  it('stores only the returned customer profile and navigates to the dashboard', async () => {
+  it('consumes only the customer from the login envelope and never persists or renders the bearer token', async () => {
     vi.spyOn(globalThis, 'fetch')
       .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ ticket: 'login-ticket', sampledSeconds: 0 }) } as Response)
       .mockResolvedValueOnce({
         ok: true,
         status: 200,
-        json: async () => ({ id: 'customer-1', email: 'ada@example.com', firstName: 'Ada', lastName: 'Lovelace' }),
+        json: async () => ({
+          customer: { id: 'customer-1', email: 'ada@example.com', firstName: 'Ada', lastName: 'Lovelace' },
+          accessToken: 'secret-bearer-token',
+          tokenType: 'Bearer',
+          expiresAt: '2026-10-19T10:00:00.000Z',
+        }),
       } as Response);
 
     render(
@@ -57,6 +62,7 @@ describe('CustomerLogin', () => {
       expect.objectContaining({ credentials: 'include' }),
     ));
     expect(localStorage.getItem('express-bank-customer')).toBeNull();
+    expect(document.body).not.toHaveTextContent('secret-bearer-token');
   });
 
   it('blocks the styled login card and shows the sampled countdown while login is delayed', async () => {

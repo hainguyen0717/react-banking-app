@@ -201,6 +201,15 @@ describe('authenticated banking API against isolated SQLite', { concurrency: fal
     assert.match(result.response.headers.get('content-type') ?? '', /^application\/json\b/);
   }
 
+  async function rawRequest(relativePath, { method = 'POST', headers = {}, body } = {}) {
+    const response = await fetch(`${baseUrl}${relativePath}`, { method, headers, body });
+    const contentType = response.headers.get('content-type') ?? '';
+    const responseBody = response.status === 204
+      ? null
+      : (/^application\/json\b/.test(contentType) ? await response.json() : await response.text());
+    return { response, body: responseBody, setCookie: response.headers.get('set-cookie') };
+  }
+
   async function createPayId(accountId, overrides = {}) {
     return prisma.payIdDirectoryEntry.create({
       data: {
@@ -362,6 +371,8 @@ describe('authenticated banking API against isolated SQLite', { concurrency: fal
     assert.equal(documentation.body.components.securitySchemes.cookieAuth.type, 'apiKey');
     assert.equal(documentation.body.components.securitySchemes.cookieAuth.in, 'cookie');
     assert.equal(documentation.body.components.securitySchemes.cookieAuth.name, 'eb_session');
+    assert.equal(documentation.body.components.securitySchemes.bearerAuth.type, 'http');
+    assert.equal(documentation.body.components.securitySchemes.bearerAuth.scheme, 'bearer');
 
     for (const route of [
       '/api/test-controls/delay',
@@ -399,13 +410,51 @@ describe('authenticated banking API against isolated SQLite', { concurrency: fal
     assert.ok(documentation.body.paths['/api/test-controls/delay'].put.responses['400']);
     assert.ok(documentation.body.paths['/api/test-controls/delay'].put.responses['403']);
     assert.ok(documentation.body.paths['/api/test-controls/delay/sample'].post.responses['403']);
-    assert.deepEqual(documentation.body.paths['/api/accounts'].get.security, [{ cookieAuth: [] }]);
-    assert.deepEqual(documentation.body.paths['/api/transfers'].post.security, [{ cookieAuth: [] }]);
-    assert.deepEqual(documentation.body.paths['/api/payments/resolve'].post.security, [{ cookieAuth: [] }]);
-    assert.deepEqual(documentation.body.paths['/api/payments'].post.security, [{ cookieAuth: [] }]);
-    assert.deepEqual(documentation.body.paths['/api/profile'].put.security, [{ cookieAuth: [] }]);
-    assert.deepEqual(documentation.body.paths['/api/scheduled-transfers'].post.security, [{ cookieAuth: [] }]);
-    assert.deepEqual(documentation.body.paths['/api/cards'].post.security, [{ cookieAuth: [] }]);
+    const protectedSecurity = [{ bearerAuth: [] }, { cookieAuth: [] }];
+    for (const [route, method] of [
+      ['/api/session', 'get'],
+      ['/api/logout', 'post'],
+      ['/api/profile', 'put'],
+      ['/api/accounts', 'get'],
+      ['/api/accounts', 'post'],
+      ['/api/joint-accounts', 'post'],
+      ['/api/transfers', 'post'],
+      ['/api/payments/resolve', 'post'],
+      ['/api/payments', 'post'],
+      ['/api/scheduled-transfers', 'get'],
+      ['/api/scheduled-transfers', 'post'],
+      ['/api/cards', 'get'],
+      ['/api/cards', 'post'],
+      ['/api/cards/{cardId}', 'get'],
+      ['/api/cards/{cardId}/lock', 'post'],
+      ['/api/cards/{cardId}/unlock', 'post'],
+      ['/api/cards/{cardId}/disable', 'post'],
+      ['/api/accounts/{accountId}/transactions', 'get'],
+    ]) {
+      assert.deepEqual(
+        documentation.body.paths[route][method].security,
+        protectedSecurity,
+        `${method.toUpperCase()} ${route} must advertise bearer or cookie authentication`,
+      );
+    }
+    for (const [route, method] of [
+      ['/api/test-controls/delay', 'put'],
+      ['/api/login', 'post'],
+      ['/api/customers', 'post'],
+      ['/api/profile', 'put'],
+      ['/api/accounts', 'post'],
+      ['/api/joint-accounts', 'post'],
+      ['/api/transfers', 'post'],
+      ['/api/payments/resolve', 'post'],
+      ['/api/payments', 'post'],
+      ['/api/scheduled-transfers', 'post'],
+      ['/api/cards', 'post'],
+    ]) {
+      const operation = documentation.body.paths[route][method];
+      assert.equal(operation.requestBody.required, true, `${method.toUpperCase()} ${route} needs a required body`);
+      assert.ok(operation.requestBody.content['application/json']);
+      assert.ok(operation.responses['415'], `${method.toUpperCase()} ${route} needs 415`);
+    }
     for (const [route, method] of [
       ['/api/session', 'get'],
       ['/api/accounts', 'get'],
@@ -788,7 +837,7 @@ describe('authenticated banking API against isolated SQLite', { concurrency: fal
       body: { email: created.registration.email, password: created.registration.password },
     });
     assertJson(authenticated, 200);
-    assert.equal(authenticated.body.id, created.customer.id);
+    assert.equal(authenticated.body.customer.id, created.customer.id);
     assert.match(authClient.cookie ?? '', /^eb_session=[A-Za-z0-9_-]{43}$/);
 
     const logout = await authClient.request('/api/logout', {
@@ -806,11 +855,20 @@ describe('authenticated banking API against isolated SQLite', { concurrency: fal
     for (const origin of [TRUSTED_ORIGIN, SECOND_TRUSTED_ORIGIN]) {
       const response = await fetch(`${baseUrl}/api/accounts`, {
         method: 'OPTIONS',
-        headers: { Origin: origin, 'Access-Control-Request-Method': 'POST' },
+        headers: {
+          Origin: origin,
+          'Access-Control-Request-Method': 'POST',
+          'Access-Control-Request-Headers': 'authorization, content-type',
+        },
       });
       assert.equal(response.status, 204);
       assert.equal(response.headers.get('access-control-allow-origin'), origin);
       assert.equal(response.headers.get('access-control-allow-credentials'), 'true');
+      const allowedHeaders = (response.headers.get('access-control-allow-headers') ?? '')
+        .split(',')
+        .map((value) => value.trim().toLowerCase());
+      assert.ok(allowedHeaders.includes('authorization'));
+      assert.ok(allowedHeaders.includes('content-type'));
     }
 
     const rejectedPreflight = await fetch(`${baseUrl}/api/accounts`, {
@@ -818,6 +876,7 @@ describe('authenticated banking API against isolated SQLite', { concurrency: fal
       headers: {
         Origin: 'http://localhost:5173.evil.example',
         'Access-Control-Request-Method': 'POST',
+        'Access-Control-Request-Headers': 'authorization, content-type',
       },
     });
     assert.equal(rejectedPreflight.headers.has('access-control-allow-origin'), false);
@@ -925,8 +984,13 @@ describe('authenticated banking API against isolated SQLite', { concurrency: fal
     assert.match(authenticated.setCookie, /SameSite=Lax/);
     assert.match(authenticated.setCookie, /Max-Age=\d+/);
     assert.doesNotMatch(authenticated.setCookie, /; Secure/);
+    assert.equal(authenticated.response.headers.get('cache-control'), 'no-store, no-cache, must-revalidate');
+    assert.equal(authenticated.response.headers.get('pragma'), 'no-cache');
+    assert.equal(authenticated.body.tokenType, 'Bearer');
+    assert.ok(Date.parse(authenticated.body.expiresAt));
 
     const token = authenticated.client.cookie.slice('eb_session='.length);
+    assert.equal(authenticated.body.accessToken, token);
     assert.equal(Buffer.from(token, 'base64url').length, 32);
     const expectedHash = createHash('sha256').update(token).digest('hex');
     const stored = await prisma.authSession.findFirst();
@@ -941,11 +1005,250 @@ describe('authenticated banking API against isolated SQLite', { concurrency: fal
 
     const session = await authenticated.client.request('/api/session');
     assert.equal(session.response.status, 200);
-    assert.deepEqual(session.body, authenticated.body);
+    assert.deepEqual(session.body, authenticated.body.customer);
     assert.equal(session.body.id, created.customer.id);
     assert.ok(Date.parse(session.body.lastLoginAt));
     assert.equal('passwordHash' in session.body, false);
     assert.equal('isActive' in session.body, false);
+  });
+
+  test('bearer-only clients can perform passive reads and representative mutations without an Origin', async () => {
+    const actor = await createAuthenticatedCustomer({ suffix: 'bearer-only-actor' });
+    const recipient = await createAuthenticatedCustomer({ suffix: 'bearer-only-recipient' });
+    const bearerClient = client();
+    const bearerHeaders = { Authorization: `Bearer ${actor.login.body.accessToken}` };
+
+    assert.equal(bearerClient.cookie, null);
+    const session = await bearerClient.request('/api/session', { headers: bearerHeaders, origin: null });
+    assertJson(session, 200);
+    assert.equal(session.body.id, actor.customer.id);
+
+    const sourceResult = await bearerClient.request('/api/accounts', {
+      method: 'POST',
+      headers: bearerHeaders,
+      origin: null,
+      body: { type: 'EVERYDAY', displayName: 'Bearer source' },
+    });
+    assertJson(sourceResult, 201);
+    assert.equal(sourceResult.body.customerId, actor.customer.id);
+    const destination = await createAccount(recipient.client, 'SAVINGS', 'Bearer destination');
+
+    const listed = await bearerClient.request('/api/accounts', { headers: bearerHeaders, origin: null });
+    assertJson(listed, 200);
+    assert.deepEqual(listed.body.accounts.map(({ id }) => id), [sourceResult.body.id]);
+
+    const transferred = await bearerClient.request('/api/transfers', {
+      method: 'POST',
+      headers: bearerHeaders,
+      origin: null,
+      body: {
+        sourceAccountId: sourceResult.body.id,
+        destinationAccountNumber: destination.accountNumber,
+        amountCents: 1_234,
+        description: 'Bearer integration transfer',
+      },
+    });
+    assertJson(transferred, 201);
+    assert.deepEqual(await balancesAndTransferCount([sourceResult.body.id, destination.id]), {
+      accounts: [
+        { id: destination.id, balanceCents: EXPECTED_OPENING_BALANCE_CENTS + 1_234 },
+        { id: sourceResult.body.id, balanceCents: EXPECTED_OPENING_BALANCE_CENTS - 1_234 },
+      ].sort((left, right) => left.id.localeCompare(right.id)),
+      transferCount: 1,
+    });
+  });
+
+  test('an explicit malformed or invalid bearer credential never falls back to a valid cookie', async () => {
+    const actor = await createAuthenticatedCustomer({ suffix: 'bearer-authoritative' });
+    const accountCount = await prisma.account.count();
+
+    for (const authorization of ['Basic opaque', 'Bearer', `Bearer ${'Z'.repeat(43)}`]) {
+      const rejected = await actor.client.request('/api/accounts', {
+        method: 'POST',
+        headers: { Authorization: authorization },
+        origin: null,
+        body: { type: 'EVERYDAY', displayName: 'Must not persist' },
+      });
+      assertJson(rejected, 401);
+      assert.deepEqual(rejected.body, { error: 'Authentication required.' });
+      assert.equal(rejected.response.headers.get('www-authenticate'), 'Bearer realm="express-bank"');
+      assert.equal(rejected.setCookie, null);
+      assert.equal(await prisma.account.count(), accountCount);
+    }
+
+    const rejectedRead = await actor.client.request('/api/session', {
+      headers: { Authorization: `Bearer ${'Y'.repeat(43)}` },
+    });
+    assertJson(rejectedRead, 401);
+    assert.equal(rejectedRead.response.headers.get('www-authenticate'), 'Bearer realm="express-bank"');
+    assert.equal(rejectedRead.setCookie, null);
+  });
+
+  test('bearer logout revokes only its selected session and clears only a matching cookie', async () => {
+    const created = await createCustomer({ suffix: 'bearer-logout' });
+    const firstLogin = await login(created.registration);
+    const secondLogin = await login(created.registration);
+    assert.equal(await prisma.authSession.count({ where: { customerId: created.customer.id } }), 2);
+
+    const unrelatedCookieLogout = await client().request('/api/logout', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${firstLogin.body.accessToken}` },
+      cookieOverride: secondLogin.client.cookie,
+      origin: null,
+    });
+    assert.equal(unrelatedCookieLogout.response.status, 204);
+    assert.equal(unrelatedCookieLogout.body, null);
+    assert.equal(unrelatedCookieLogout.response.headers.get('content-type'), null);
+    assert.equal(unrelatedCookieLogout.setCookie, null);
+    assert.equal(await prisma.authSession.count({ where: { customerId: created.customer.id } }), 1);
+
+    const replay = await client().request('/api/session', {
+      headers: { Authorization: `Bearer ${firstLogin.body.accessToken}` },
+    });
+    assertJson(replay, 401);
+    assert.equal(replay.response.headers.get('www-authenticate'), 'Bearer realm="express-bank"');
+    assert.equal((await secondLogin.client.request('/api/session')).response.status, 200);
+
+    const thirdLogin = await login(created.registration);
+    const matchingCookieLogout = await thirdLogin.client.request('/api/logout', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${thirdLogin.body.accessToken}` },
+      origin: null,
+    });
+    assert.equal(matchingCookieLogout.response.status, 204);
+    assert.match(matchingCookieLogout.setCookie, /^eb_session=;/);
+    assert.match(matchingCookieLogout.setCookie, /Max-Age=0/);
+    assert.equal(thirdLogin.client.cookie, null);
+    assert.equal(await prisma.authSession.count({ where: { customerId: created.customer.id } }), 1);
+  });
+
+  test('required JSON media types, malformed JSON, bodyless actions, and response content types are enforced over HTTP', async () => {
+    const actor = await createAuthenticatedCustomer({
+      suffix: 'content-type-actor',
+      firstName: 'Before',
+      lastName: 'Media',
+    });
+    const coOwner = await createCustomer({
+      suffix: 'content-type-coowner',
+      email: 'content.type.coowner@example.test',
+    });
+    const bearerHeaders = { Authorization: `Bearer ${actor.login.body.accessToken}` };
+    const unsupportedCustomer = {
+      email: 'content.type.rejected@example.test',
+      password: TEST_PASSWORD,
+      firstName: 'Rejected',
+      lastName: 'Registration',
+    };
+    const requiredBodyRequests = [
+      {
+        method: 'PUT', path: '/api/test-controls/delay', headers: { Origin: TRUSTED_ORIGIN },
+        body: { minSeconds: 1, maxSeconds: 1, scope: 'API' },
+      },
+      {
+        method: 'POST', path: '/api/login', headers: { Origin: TRUSTED_ORIGIN },
+        body: { email: actor.registration.email, password: actor.registration.password },
+      },
+      {
+        method: 'POST', path: '/api/customers', headers: { Origin: TRUSTED_ORIGIN }, body: unsupportedCustomer,
+      },
+      {
+        method: 'PUT', path: '/api/profile', headers: bearerHeaders,
+        body: { firstName: 'Changed', lastName: 'Media', address: 'Must not persist' },
+      },
+      { method: 'POST', path: '/api/accounts', headers: bearerHeaders, body: { type: 'EVERYDAY' } },
+      {
+        method: 'POST', path: '/api/joint-accounts', headers: bearerHeaders,
+        body: { type: 'EVERYDAY', coOwnerEmail: coOwner.customer.email },
+      },
+      { method: 'POST', path: '/api/transfers', headers: bearerHeaders, body: {} },
+      { method: 'POST', path: '/api/payments/resolve', headers: bearerHeaders, body: {} },
+      { method: 'POST', path: '/api/payments', headers: bearerHeaders, body: {} },
+      { method: 'POST', path: '/api/scheduled-transfers', headers: bearerHeaders, body: {} },
+      { method: 'POST', path: '/api/cards', headers: bearerHeaders, body: {} },
+    ];
+    const beforeState = {
+      delay: (await client().request('/api/test-controls/delay')).body,
+      customerCount: await prisma.customer.count(),
+      sessionCount: await prisma.authSession.count(),
+      accountCount: await prisma.account.count(),
+      transferCount: await prisma.transfer.count(),
+      paymentCount: await prisma.payment.count(),
+      scheduledTransferCount: await prisma.scheduledTransfer.count(),
+      cardCount: await prisma.card.count(),
+      cardTransactionCount: await prisma.cardTransaction.count(),
+      profile: await prisma.customer.findUnique({ where: { id: actor.customer.id } }),
+    };
+
+    for (const contentType of [null, 'text/plain']) {
+      for (const request of requiredBodyRequests) {
+        const headers = { ...request.headers };
+        if (contentType !== null) headers['Content-Type'] = contentType;
+        const rejected = await rawRequest(request.path, {
+          method: request.method,
+          headers,
+          body: Buffer.from(JSON.stringify(request.body)),
+        });
+        assertJson(rejected, 415);
+        assert.deepEqual(rejected.body, { error: 'Content-Type must be application/json.' });
+      }
+    }
+
+    assert.deepEqual((await client().request('/api/test-controls/delay')).body, beforeState.delay);
+    assert.equal(await prisma.customer.count(), beforeState.customerCount);
+    assert.equal(await prisma.authSession.count(), beforeState.sessionCount);
+    assert.equal(await prisma.account.count(), beforeState.accountCount);
+    assert.equal(await prisma.transfer.count(), beforeState.transferCount);
+    assert.equal(await prisma.payment.count(), beforeState.paymentCount);
+    assert.equal(await prisma.scheduledTransfer.count(), beforeState.scheduledTransferCount);
+    assert.equal(await prisma.card.count(), beforeState.cardCount);
+    assert.equal(await prisma.cardTransaction.count(), beforeState.cardTransactionCount);
+    assert.deepEqual(
+      await prisma.customer.findUnique({ where: { id: actor.customer.id } }),
+      beforeState.profile,
+    );
+
+    const charsetAccepted = await rawRequest('/api/test-controls/delay', {
+      method: 'PUT',
+      headers: { Origin: TRUSTED_ORIGIN, 'Content-Type': 'Application/JSON; Charset=UTF-8' },
+      body: Buffer.from(JSON.stringify({ minSeconds: 0, maxSeconds: 0, scope: 'BOTH' })),
+    });
+    assertJson(charsetAccepted, 200);
+    assert.deepEqual(charsetAccepted.body, { minSeconds: 0, maxSeconds: 0, scope: 'BOTH' });
+
+    const malformed = await rawRequest('/api/accounts', {
+      method: 'POST',
+      headers: { ...bearerHeaders, 'Content-Type': 'application/json; charset="utf-8"' },
+      body: Buffer.from('{"type":'),
+    });
+    assertJson(malformed, 400);
+    assert.deepEqual(malformed.body, { error: 'Invalid JSON request body.' });
+    assert.equal(await prisma.account.count(), beforeState.accountCount);
+
+    const createdAccount = await rawRequest('/api/accounts', {
+      method: 'POST',
+      headers: { ...bearerHeaders, 'Content-Type': 'application/json; charset=utf-8' },
+      body: Buffer.from(JSON.stringify({ type: 'EVERYDAY', displayName: 'Charset accepted' })),
+    });
+    assertJson(createdAccount, 201);
+    const createdCard = await actor.client.request('/api/cards', {
+      method: 'POST',
+      body: { accountId: createdAccount.body.id },
+    });
+    assertJson(createdCard, 201);
+
+    const passiveGet = await rawRequest('/api/accounts', { method: 'GET', headers: bearerHeaders });
+    assertJson(passiveGet, 200);
+    const bodylessAction = await rawRequest(`/api/cards/${createdCard.body.id}/lock`, {
+      method: 'POST',
+      headers: bearerHeaders,
+    });
+    assertJson(bodylessAction, 200);
+    assert.equal(bodylessAction.body.status, 'LOCKED');
+
+    const noContent = await rawRequest('/api/logout', { method: 'POST', headers: bearerHeaders });
+    assert.equal(noContent.response.status, 204);
+    assert.equal(noContent.body, null);
+    assert.equal(noContent.response.headers.get('content-type'), null);
   });
 
   test('protected APIs reject missing, malformed, unknown, idle, absolute-expired, and inactive sessions', async () => {
