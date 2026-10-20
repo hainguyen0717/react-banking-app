@@ -17,7 +17,7 @@
 .sidebarBrand { height: 4.75rem; display: flex; align-items: center; padding-inline: 0.75rem; }
 .brand, .brandDot { font-size: 2rem; font-weight: 600; letter-spacing: -0.055em; line-height: 1; }
 .brandDot { color: var(--dashboard-accent); }
-.sidebarMenu { background: var(--dashboard-surface-fallback); border-radius: var(--radius-card); }
+.sidebarMenu { margin-top: 1rem; background: var(--dashboard-surface-fallback); border-radius: var(--radius-card); }
 .functionNav { padding: 0.75rem; }
 .navGroup + .navGroup { margin-top: 1.25rem; }
 .navGroupLabel { margin: 0 0 0.5rem 0.75rem; color: var(--dashboard-faint); font-size: 0.75rem; font-weight: 500; }
