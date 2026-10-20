@@ -13,7 +13,29 @@ export interface OverviewTransaction {
   amountCents: number;
   description: string | null;
   counterpartyLabel: string;
+  counterpartyAccountNumber?: string | null;
   createdAt: string;
+}
+
+export function activityHeadline(transaction: OverviewTransaction) {
+  const description = transaction.description?.trim();
+  if (description) return description;
+
+  const counterpartyLabel = transaction.counterpartyLabel?.trim();
+  if (counterpartyLabel) return counterpartyLabel;
+
+  const accountNumber = transaction.counterpartyAccountNumber?.trim();
+  if (accountNumber) return accountNumber;
+
+  const direction = transaction.direction === 'SENT' ? 'Sent' : 'Received';
+  const method = transaction.method === 'BANK_ACCOUNT'
+    ? 'bank account payment'
+    : transaction.method === 'PAYID'
+      ? 'PayID payment'
+      : transaction.method === 'BPAY'
+        ? 'BPAY payment'
+        : 'transfer';
+  return `${direction} ${method}`;
 }
 
 export interface AccountTransaction extends OverviewTransaction {

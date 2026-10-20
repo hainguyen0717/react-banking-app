@@ -17,7 +17,7 @@
   gap: 1rem;
   padding: 1.25rem;
   border: 1px solid var(--dashboard-border-strong);
-  border-radius: 1rem;
+  border-radius: var(--radius-card, 0.5rem);
   background: var(--dashboard-surface-fallback);
   color: var(--dashboard-foreground);
   box-shadow: var(--dashboard-shadow-md);

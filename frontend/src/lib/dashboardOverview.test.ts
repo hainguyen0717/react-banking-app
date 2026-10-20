@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  activityHeadline,
   currentWeekSpend,
   mergeAccountTransactions,
   selectFeaturedCard,
@@ -13,6 +14,14 @@ const accounts = [
 ];
 
 describe('dashboard overview helpers', () => {
+  it('uses a truthful activity headline priority and trims unusable values', () => {
+    const base = { id: 'tx', method: 'PAYID' as const, direction: 'SENT' as const, amountCents: 100, createdAt: '2026-10-19T08:00:00Z' };
+    expect(activityHeadline({ ...base, description: '  Rent share  ', counterpartyLabel: 'Alex', counterpartyAccountNumber: 'EXB-1' })).toBe('Rent share');
+    expect(activityHeadline({ ...base, description: '   ', counterpartyLabel: '  Alex  ', counterpartyAccountNumber: 'EXB-1' })).toBe('Alex');
+    expect(activityHeadline({ ...base, description: null, counterpartyLabel: ' ', counterpartyAccountNumber: ' EXB-1 ' })).toBe('EXB-1');
+    expect(activityHeadline({ ...base, description: null, counterpartyLabel: ' ', counterpartyAccountNumber: null })).toBe('Sent PayID payment');
+  });
+
   it('counts each accessible account once and preserves account context on separate perspectives', () => {
     expect(totalAccessibleBalance(accounts)).toBe(4200);
     const merged = mergeAccountTransactions(accounts, {

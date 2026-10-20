@@ -33,23 +33,25 @@ Open [http://localhost:5173](http://localhost:5173). The frontend uses `http://l
 
 Create a customer from the login page or use the configured seeded customer. After login, the dashboard can create `EVERYDAY`, `SAVINGS`, and `BUSINESS` accounts. Ownership is either personal or joint; joint is not a fourth product type. Each new account receives the server-controlled `DEFAULT_ACCOUNT_BALANCE_CENTS` opening balance, which defaults to `100000000` cents (`$1,000,000.00` AUD) for test purposes. A joint account receives that balance once and is shown in full to each of its two owners.
 
-The signed-in experience uses the Executive Black visual system: a near-black layered background, translucent charcoal glass surfaces, white and restrained grey typography, and Deloitte green (`#86BC25`) for active and primary emphasis. Its responsive left navigation keeps every existing destination grouped under Primary, Manage, and Settings.
+The signed-in experience uses a compact Executive Black ledger: true-black grounds, opaque charcoal working surfaces, restrained white/grey typography, and Deloitte green (`#86BC25`) reserved mainly for financial meaning and the primary action. Selective glass is limited to the balance and featured-card moments. Desktop keeps the grouped left navigation; at 1024px and below it becomes a 56px header and keyboard-accessible full-screen drawer with every destination, customer controls, and Send money.
 
 The dashboard uses deep-linkable function navigation. `/dashboard`, an omitted `view`, and an invalid `view` all show the live Overview:
 
 - `/dashboard?view=overview` — total accessible balance, featured holder-owned masked card, three newest account-history entries, and current local Monday–Sunday outgoing spend.
-- `/dashboard?view=accounts` — account overview and transaction history.
+- `/dashboard?view=accounts` — compact account ledger rows with expandable transaction history.
 - `/dashboard?view=new-account` — new account form.
 - `/dashboard?view=new-joint-account` — joint account form for a second registered active customer.
-- `/dashboard?view=cards` — open, temporarily lock, unlock, and permanently disable demo cards.
-- `/dashboard?view=payments` — resolve, review, confirm, and receipt for an immediate account, email PayID, or BPAY payment.
+- `/dashboard?view=cards` — existing cards first, with a collapsed secondary form to open, temporarily lock, unlock, and permanently disable demo cards.
+- `/dashboard?view=payments` — selected owned-source account context beside resolve, review, confirm, and receipt for an immediate account, email PayID, or BPAY payment.
 - `/dashboard?view=transfer` — transfer form.
 - `/dashboard?view=schedule-transfer` — one-time future transfer form with a picker-only local date and time.
 - `/dashboard?view=scheduled-transfers` — customer-private schedule statuses.
 - `/dashboard?view=profile` — edit first name, last name, and address.
 - `/dashboard?view=delay-simulator` — configure an inclusive 0–60 second delay range for API calls, UI navigation, or both.
 
-Overview values are composed from the authenticated customer's existing account, card, and account-history APIs. A joint or duplicate account record is counted once by stable account ID. Weekly spend includes recorded `SENT` transfers and payments only; incoming history and display-only card samples are excluded. “Send money” opens the existing transfer journey, “View all” opens Accounts, and an activity row opens its owned account with history expanded. A transfer can target any valid Express Bank account number, including an account owned by another customer.
+Overview values are composed from the authenticated customer's existing account, card, and account-history APIs. A joint or duplicate account record is counted once by stable account ID. Weekly spend includes recorded `SENT` transfers and payments only; incoming history and display-only card samples are excluded. A zero-spend week keeps an explanatory zero baseline instead of seven empty columns. Activity leads with the real description, then counterparty, account number, or a neutral method fallback. “Send money” opens the existing transfer journey, “View all” opens Accounts, and an activity row opens its owned account with history expanded. A transfer can target any valid Express Bank account number, including an account owned by another customer.
+
+Test-delay status, configuration, reset, validation, and refresh controls appear only in the Test controls view. Pending delayed navigation remains announced through an assistive live region on other views without adding a general dashboard banner.
 
 ## Active APIs
 

@@ -148,6 +148,43 @@ describe('Dashboard navigation', () => {
     expect(screen.queryByTestId('dashboard-actions')).not.toBeInTheDocument();
   });
 
+  it('opens an accessible mobile drawer with every destination and restores focus on dismissal', async () => {
+    mockOverviewFetch();
+    renderDashboard('/dashboard?view=overview');
+    await screen.findByTestId('overview-featured-card-card-active');
+
+    const trigger = screen.getByTestId('dashboard-mobile-menu-toggle');
+    expect(screen.getByTestId('dashboard-mobile-current-section')).toHaveTextContent('Overview');
+    fireEvent.click(trigger);
+    const drawer = screen.getByRole('dialog', { name: 'DBank navigation' });
+    expect(screen.getByTestId('dashboard-mobile-drawer-close')).toHaveFocus();
+    expect(within(drawer).getByTestId('dashboard-mobile-send-money')).toHaveAttribute('href', '/dashboard?view=transfer');
+    expect(within(drawer).getAllByTestId(/^dashboard-mobile-nav-(?!group)/)).toHaveLength(11);
+    fireEvent.keyDown(drawer, { key: 'Escape' });
+    expect(screen.queryByTestId('dashboard-mobile-drawer')).not.toBeInTheDocument();
+    await waitFor(() => expect(trigger).toHaveFocus());
+
+    fireEvent.click(trigger);
+    fireEvent.click(within(screen.getByTestId('dashboard-mobile-drawer')).getByTestId('dashboard-mobile-nav-payments'));
+    expect(await screen.findByTestId('dashboard-view-payments')).toBeInTheDocument();
+    expect(screen.queryByTestId('dashboard-mobile-drawer')).not.toBeInTheDocument();
+    expect(screen.getByTestId('dashboard-mobile-current-section')).toHaveTextContent('Payments');
+  });
+
+  it('keeps delay configuration and status inside Test controls', async () => {
+    mockOverviewFetch();
+    const view = renderDashboard('/dashboard?view=overview', { minSeconds: 2, maxSeconds: 4, scope: 'UI' });
+    await screen.findByTestId('overview-featured-card-card-active');
+    expect(screen.queryByTestId('delay-banner')).not.toBeInTheDocument();
+    view.unmount();
+
+    vi.restoreAllMocks();
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(response({ accounts }));
+    renderDashboard('/dashboard?view=delay-simulator', { minSeconds: 2, maxSeconds: 4, scope: 'UI' });
+    expect(await screen.findByTestId('delay-banner-status')).toHaveTextContent('2–4s · UI');
+    expect(screen.getByTestId('delay-banner-reset')).toBeInTheDocument();
+  });
+
   it.each([
     ['/dashboard?view=accounts', 'dashboard-accounts-heading-row'],
     ['/dashboard?view=new-account', 'new-account-view-header'],
@@ -195,8 +232,10 @@ describe('Dashboard navigation', () => {
     expect(screen.getByTestId('overview-activity-account-2-transaction-received-received')).toHaveTextContent('Received into Goals');
     expect(screen.getByTestId('overview-activity-account-1-transaction-sent-sent')).toHaveTextContent('Sent from Everyday');
     expect(screen.getByTestId('overview-activity-account-1-transaction-old-sent')).toBeInTheDocument();
+    expect(screen.getByTestId('overview-activity-counterparty-account-1-transaction-sent-sent')).toHaveTextContent('Lunch');
     expect(screen.getByTestId('overview-weekly-spend-total')).toHaveTextContent('$25.00');
     expect(screen.getAllByTestId(/^overview-weekday-\d{4}-\d{2}-\d{2}$/)).toHaveLength(7);
+    expect(screen.queryByTestId('overview-spend-zero-state')).not.toBeInTheDocument();
   });
 
   it('shows explicit empty states when the customer has no overview records', async () => {
@@ -208,6 +247,8 @@ describe('Dashboard navigation', () => {
     expect(screen.getByTestId('overview-account-count')).toHaveTextContent('Across 0 accounts');
     expect(screen.getByTestId('overview-activity-empty')).toBeInTheDocument();
     expect(screen.getByTestId('overview-spend-empty')).toBeInTheDocument();
+    expect(screen.getByTestId('overview-spend-zero-baseline')).toBeInTheDocument();
+    expect(screen.queryAllByTestId(/^overview-weekday-\d{4}-\d{2}-\d{2}$/)).toHaveLength(0);
   });
 
   it('does not present a zero balance while account data is still loading', async () => {
@@ -311,7 +352,7 @@ describe('Dashboard navigation', () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(response({ accounts }));
     renderDashboard('/dashboard?view=accounts', { minSeconds: 3, maxSeconds: 3, scope: 'UI' });
     await screen.findByTestId('account-card-account-1');
-    expect(await screen.findByTestId('delay-banner-status')).toHaveTextContent('3s · UI');
+    expect(screen.queryByTestId('delay-banner-status')).not.toBeInTheDocument();
     vi.useFakeTimers();
 
     const newAccountLink = screen.getByTestId('dashboard-nav-new-account');
@@ -469,6 +510,14 @@ describe('Dashboard banking functions', () => {
     expect(screen.getByTestId('account-ownership-account-2')).toHaveTextContent('Joint');
     expect(screen.getByTestId('account-owner-account-2-customer-1')).toHaveTextContent('Ada Lovelace');
     expect(screen.getByTestId('account-owner-account-2-customer-2')).toHaveTextContent('Grace Hopper');
+  });
+
+  it('renders three account ledger rows with stable account IDs', async () => {
+    const thirdAccount = { ...accounts[0], id: 'account-3', accountNumber: 'EXB-000000003', displayName: 'Bills' };
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(response({ accounts: [...accounts, thirdAccount] }));
+    renderDashboard('/dashboard?view=accounts');
+    expect(await screen.findAllByTestId(/^account-card-account-/)).toHaveLength(3);
+    expect(screen.getByTestId('account-card-account-3')).toContainElement(screen.getByTestId('account-balance-account-3'));
   });
 
   it('creates a joint account with exactly three product types and no client-owned balance or owner IDs', async () => {
@@ -653,6 +702,11 @@ describe('Dashboard banking functions', () => {
     expect(await screen.findByTestId('dashboard-view-payments')).toBeInTheDocument();
     expect(screen.getByTestId('dashboard-nav-payments')).toHaveAttribute('aria-current', 'page');
     expect(screen.getByTestId('payment-source-option-account-2')).toHaveTextContent('Joint');
+    expect(screen.getByTestId('payment-context-account-account-1')).toBeInTheDocument();
+    expect(screen.getByTestId('payment-context-balance-account-1')).toHaveTextContent('$1,000,000.00');
+    fireEvent.change(screen.getByTestId('payment-source-account'), { target: { value: 'account-2' } });
+    expect(screen.getByTestId('payment-context-account-account-2')).toBeInTheDocument();
+    expect(screen.getByTestId('payment-context-ownership-account-2')).toHaveTextContent('Joint account');
     expect(screen.getByTestId('payment-destination-account')).toBeInTheDocument();
     fireEvent.click(screen.getByTestId('payment-method-payid'));
     expect(screen.getByTestId('payment-payid')).toBeInTheDocument();
@@ -660,6 +714,32 @@ describe('Dashboard banking functions', () => {
     fireEvent.click(screen.getByTestId('payment-method-bpay'));
     expect(screen.getByTestId('payment-biller-code')).toBeInTheDocument();
     expect(screen.getByTestId('payment-customer-reference')).toBeInTheDocument();
+  });
+
+  it('leads with existing cards and collapses the secondary open-card form after success', async () => {
+    const openedCard = { ...cards[0], id: 'card-new', maskedNumber: '•••• 9898', status: 'ACTIVE' as const };
+    let cardReads = 0;
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
+      const url = String(input);
+      if (url.endsWith('/api/accounts')) return Promise.resolve(response({ accounts }));
+      if (url.endsWith('/api/cards') && (init?.method ?? 'GET') === 'POST') return Promise.resolve(response(openedCard, 201));
+      if (url.endsWith('/api/cards')) {
+        cardReads += 1;
+        return Promise.resolve(response({ cards: cardReads > 1 ? [...cards, openedCard] : cards }));
+      }
+      return Promise.resolve(response({}));
+    });
+    renderDashboard('/dashboard?view=cards');
+    const cardList = await screen.findByTestId('cards-list');
+    const toggle = screen.getByTestId('cards-open-toggle');
+    expect(cardList.compareDocumentPosition(toggle) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.queryByTestId('card-open-form')).not.toBeInTheDocument();
+    fireEvent.click(toggle);
+    expect(screen.getByTestId('card-open-form')).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('card-open-submit'));
+    expect(await screen.findByTestId('card-row-card-new')).toBeInTheDocument();
+    expect(screen.queryByTestId('card-open-form')).not.toBeInTheDocument();
+    expect(screen.getByTestId('cards-open-toggle')).toHaveAttribute('aria-expanded', 'false');
   });
 
   it('reviews and confirms a bank-account payment in cents, then shows a stable receipt and refreshes history', async () => {
