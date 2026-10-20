@@ -4,11 +4,13 @@ This repository is a React, CommonJS Express, Prisma, and SQLite banking demo bu
 
 ## Running the application
 
+Use Node.js 22.12.0 or newer; the current frontend build and test toolchain requires that runtime range.
+
 1. Install dependencies:
 
    ```bash
-   cd backend && npm install
-   cd ../frontend && npm install
+   cd backend && npm ci
+   cd ../frontend && npm ci
    ```
 
 2. Copy `backend/.env.example` to `backend/.env`, then apply migrations and start the API:
@@ -73,10 +75,26 @@ The 11 endpoints with required request bodies require `Content-Type: application
 
 See [backend/README.md](backend/README.md) for backend details and [docs/CURRENT_FUNCTIONS_AND_APIS.md](docs/CURRENT_FUNCTIONS_AND_APIS.md) for the function-to-API table.
 
+## Dependency health
+
+The backend and frontend are independent npm package roots with committed lockfiles. Run installs and package commands inside `backend/` or `frontend/`; there is intentionally no repository-root npm install.
+
+Use `npm ci` for a clean, reproducible install. The following package-local checks review dependency validity, available updates, and known vulnerabilities without applying broad forced upgrades:
+
+```bash
+npm ls --all
+npm outdated
+npm audit
+npm doctor
+```
+
+`npm audit fix --force` is not part of the maintenance workflow. Review production and development findings separately, inspect advisory dependency paths with `npm explain <package>`, and make explicit compatible upgrades so application behavior remains testable.
+
 ## Verification
 
 ```bash
 cd backend && npm test
 cd ../frontend && npm test -- --run
+npm run lint
 npm run build
 ```

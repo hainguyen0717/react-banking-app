@@ -2,11 +2,13 @@
 
 The active backend is the CommonJS Express server in `src/server.js`, backed by Prisma and SQLite. It implements the deliberately simple behavior needed to exercise API and UI test tools.
 
+The backend requires Node.js 18.11.0 or newer for the built-in development watcher. Use Node.js 22.12.0 or newer when working with the frontend in this repository.
+
 ## Setup
 
 ```bash
 cp .env.example .env
-npm install
+npm ci
 npm run prisma:generate
 npm run prisma:migrate
 npm run seed
@@ -119,5 +121,7 @@ npm run prisma:generate
 npm run prisma:migrate
 npm run seed
 ```
+
+`package-lock.json` is committed for reproducible `npm ci` installs. Review package health from this directory with `npm ls --all`, `npm outdated`, `npm audit`, and `npm doctor`. Avoid `npm audit fix --force`; inspect advisory paths and make explicit compatible upgrades. The development watcher uses Node's built-in `--watch` mode, so no separate watcher dependency is required.
 
 The focused service tests cover customer normalization/hashing/duplicates, account types/configuration/customer status, joint-owner validation and listing, either-owner transfer/payment/history authorization, payment resolution secrecy, atomic account/PayID effects, BPAY debit-only behavior, rejected-write guarantees, and history direction/order.

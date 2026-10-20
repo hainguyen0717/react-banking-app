@@ -2,8 +2,7 @@ node_modules/
 .env
 backend/.env
 backend/node_modules/
-backend/prisma/dev.db
-backend/prisma/*.db
+
 backend/prisma/*.db-journal
 frontend/.vite-cache/
 frontend/dist/

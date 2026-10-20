@@ -320,6 +320,10 @@ describe('authenticated banking API against isolated SQLite', { concurrency: fal
     assert.deepEqual(firstHealth.body, { status: 'ok' });
     assert.deepEqual(secondHealth.body, firstHealth.body);
 
+    const legacyHealth = await anonymous.request('/health', { redirect: 'manual' });
+    assert.equal(legacyHealth.response.status, 308);
+    assert.equal(legacyHealth.response.headers.get('location'), '/api/health');
+
     const redirect = await anonymous.request('/docs', { redirect: 'manual' });
     assert.equal(redirect.response.status, 308);
     assert.equal(redirect.response.headers.get('location'), '/docs/');
