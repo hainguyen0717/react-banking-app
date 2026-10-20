@@ -148,6 +148,40 @@ describe('Dashboard navigation', () => {
     expect(screen.queryByTestId('dashboard-actions')).not.toBeInTheDocument();
   });
 
+  it.each([
+    ['/dashboard?view=accounts', 'dashboard-accounts-heading-row'],
+    ['/dashboard?view=new-account', 'new-account-view-header'],
+    ['/dashboard?view=new-joint-account', 'new-joint-account-view-header'],
+    ['/dashboard?view=payments', 'payments-view-header'],
+    ['/dashboard?view=transfer', 'transfer-view-header'],
+    ['/dashboard?view=profile', 'profile-view-header'],
+    ['/dashboard?view=schedule-transfer', 'schedule-transfer-view-header'],
+    ['/dashboard?view=scheduled-transfers', 'scheduled-transfers-heading-row'],
+    ['/dashboard?view=cards', 'cards-heading-row'],
+    ['/dashboard?view=delay-simulator', 'delay-simulator-view-header'],
+  ])('uses the shared secondary page header for %s', async (initialEntry, headerTestId) => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
+      const url = String(input);
+      if (url.endsWith('/api/cards')) return Promise.resolve(response({ cards: [] }));
+      if (url.endsWith('/api/scheduled-transfers')) return Promise.resolve(response({ scheduledTransfers: [] }));
+      return Promise.resolve(response({ accounts }));
+    });
+    renderDashboard(initialEntry);
+    expect(await screen.findByTestId(headerTestId)).toBeInTheDocument();
+  });
+
+  it('keeps repeated cards as separate siblings in the consistently spaced card list', async () => {
+    mockOverviewFetch();
+    renderDashboard('/dashboard?view=cards');
+
+    const firstCard = await screen.findByTestId('card-row-card-locked');
+    const secondCard = screen.getByTestId('card-row-card-active');
+    const cardList = screen.getByTestId('cards-list');
+    expect(cardList).toContainElement(firstCard);
+    expect(cardList).toContainElement(secondCard);
+    expect(firstCard.nextElementSibling).toBe(secondCard);
+  });
+
   it('composes live account, card, recent activity and weekly spend data on the overview', async () => {
     mockOverviewFetch();
     renderDashboard('/dashboard?view=overview');

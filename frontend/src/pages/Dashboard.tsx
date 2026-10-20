@@ -922,8 +922,12 @@ export function Dashboard() {
             ) : null}
             {activeView === 'delay-simulator' ? (
               <section className={styles.viewPanel} aria-labelledby="delay-simulator-heading" data-testid="dashboard-view-delay-simulator">
-                <p className={styles.eyebrow} data-testid="delay-simulator-eyebrow">Test controls</p>
-                <h2 className={styles.sectionTitle} id="delay-simulator-heading" data-testid="delay-simulator-heading">Delay simulator</h2>
+                <header className={styles.viewHeader} data-testid="delay-simulator-view-header">
+                  <div data-testid="delay-simulator-heading-copy">
+                    <p className={styles.eyebrow} data-testid="delay-simulator-eyebrow">Test controls</p>
+                    <h2 className={styles.sectionTitle} id="delay-simulator-heading" data-testid="delay-simulator-heading">Delay simulator</h2>
+                  </div>
+                </header>
                 <div className={styles.actionCard} data-testid="delay-simulator-card">
                   <p className={styles.actionCopy} data-testid="delay-simulator-copy">Choose an inclusive range. Each subsequent API response or dashboard destination change samples its own whole-second delay. Control requests remain responsive.</p>
                   <form className={styles.form} onSubmit={handleDelaySubmit} noValidate aria-busy={delayStatus !== 'ready'} data-testid="delay-simulator-form">
@@ -956,13 +960,13 @@ export function Dashboard() {
             ) : null}
             {activeView === 'accounts' ? (
               <section className={styles.viewPanel} aria-labelledby="accounts-heading" data-testid="dashboard-view-accounts">
-                <div className={styles.sectionHeading} data-testid="dashboard-accounts-heading-row">
+                <header className={`${styles.sectionHeading} ${styles.viewHeader}`} data-testid="dashboard-accounts-heading-row">
                   <div data-testid="dashboard-accounts-heading-copy">
                     <p className={styles.eyebrow} data-testid="dashboard-accounts-eyebrow">Portfolio</p>
                     <h2 className={styles.sectionTitle} id="accounts-heading" data-testid="dashboard-view-accounts-heading">Accounts overview</h2>
                   </div>
                   <button className={styles.refreshButton} type="button" onClick={() => void loadAccounts()} data-testid="dashboard-accounts-refresh">Refresh</button>
-                </div>
+                </header>
 
                 {accountsStatus === 'loading' ? <p className={styles.state} role="status" data-testid="dashboard-accounts-loading">Loading accounts…</p> : null}
                 {accountsStatus === 'error' ? <p className={styles.error} role="alert" data-testid="dashboard-accounts-error">{accountsError}</p> : null}
@@ -1032,7 +1036,9 @@ export function Dashboard() {
 
             {activeView === 'new-account' ? (
               <section className={styles.viewPanel} aria-labelledby="new-account-view-heading" data-testid="dashboard-view-new-account">
-                <h2 className={styles.sectionTitle} id="new-account-view-heading" data-testid="dashboard-view-new-account-heading">New account</h2>
+                <header className={styles.viewHeader} data-testid="new-account-view-header">
+                  <h2 className={styles.sectionTitle} id="new-account-view-heading" data-testid="dashboard-view-new-account-heading">New account</h2>
+                </header>
                 <section className={styles.actionCard} aria-labelledby="create-account-heading" data-testid="account-create-section">
                   <p className={styles.eyebrow} data-testid="account-create-eyebrow">Account setup</p>
                   <h3 className={styles.actionTitle} id="create-account-heading" data-testid="account-create-heading">Open a test account</h3>
@@ -1055,7 +1061,9 @@ export function Dashboard() {
 
             {activeView === 'new-joint-account' ? (
               <section className={styles.viewPanel} aria-labelledby="new-joint-account-view-heading" data-testid="dashboard-view-new-joint-account">
-                <h2 className={styles.sectionTitle} id="new-joint-account-view-heading" data-testid="dashboard-view-new-joint-account-heading">New joint account</h2>
+                <header className={styles.viewHeader} data-testid="new-joint-account-view-header">
+                  <h2 className={styles.sectionTitle} id="new-joint-account-view-heading" data-testid="dashboard-view-new-joint-account-heading">New joint account</h2>
+                </header>
                 <section className={styles.actionCard} aria-labelledby="create-joint-account-heading" data-testid="joint-account-create-section">
                   <p className={styles.eyebrow} data-testid="joint-account-create-eyebrow">Shared account setup</p>
                   <h3 className={styles.actionTitle} id="create-joint-account-heading" data-testid="joint-account-create-heading">Open a joint test account</h3>
@@ -1086,8 +1094,12 @@ export function Dashboard() {
 
             {activeView === 'payments' ? (
               <section className={styles.viewPanel} aria-labelledby="payments-heading" data-testid="dashboard-view-payments">
-                <h2 className={styles.sectionTitle} id="payments-heading" data-testid="payments-heading">Payments</h2>
-                <p className={styles.actionCopy} data-testid="payments-copy">Make an immediate AUD payment by Express Bank account number, email PayID or BPAY.</p>
+                <header className={styles.viewHeader} data-testid="payments-view-header">
+                  <div data-testid="payments-heading-copy">
+                    <h2 className={styles.sectionTitle} id="payments-heading" data-testid="payments-heading">Payments</h2>
+                    <p className={styles.actionCopy} data-testid="payments-copy">Make an immediate AUD payment by Express Bank account number, email PayID or BPAY.</p>
+                  </div>
+                </header>
                 {paymentMessage ? <p className={paymentMessage.kind === 'error' ? styles.error : styles.formMessage} role={paymentMessage.kind === 'error' ? 'alert' : 'status'} data-testid="payment-message">{paymentMessage.text}</p> : null}
 
                 {!paymentReview && !paymentReceipt ? (
@@ -1176,7 +1188,9 @@ export function Dashboard() {
 
             {activeView === 'transfer' ? (
               <section className={styles.viewPanel} aria-labelledby="transfer-view-heading" data-testid="dashboard-view-transfer">
-                <h2 className={styles.sectionTitle} id="transfer-view-heading" data-testid="dashboard-view-transfer-heading">Transfer</h2>
+                <header className={styles.viewHeader} data-testid="transfer-view-header">
+                  <h2 className={styles.sectionTitle} id="transfer-view-heading" data-testid="dashboard-view-transfer-heading">Transfer</h2>
+                </header>
                 <section className={styles.actionCard} aria-labelledby="transfer-heading" data-testid="transfer-section">
                   <p className={styles.eyebrow} data-testid="transfer-eyebrow">Transfer</p>
                   <h3 className={styles.actionTitle} id="transfer-heading" data-testid="transfer-heading">Send money</h3>
@@ -1206,7 +1220,9 @@ export function Dashboard() {
 
             {activeView === 'profile' ? (
               <section className={styles.viewPanel} aria-labelledby="profile-heading" data-testid="dashboard-view-profile">
-                <h2 className={styles.sectionTitle} id="profile-heading" data-testid="profile-heading">Personal information</h2>
+                <header className={styles.viewHeader} data-testid="profile-view-header">
+                  <h2 className={styles.sectionTitle} id="profile-heading" data-testid="profile-heading">Personal information</h2>
+                </header>
                 <section className={styles.actionCard} data-testid="profile-card">
                   <p className={styles.actionCopy} data-testid="profile-copy">Keep the name and address shown across your banking profile up to date.</p>
                   <form className={styles.form} onSubmit={handleProfileUpdate} data-testid="profile-form">
@@ -1228,7 +1244,9 @@ export function Dashboard() {
 
             {activeView === 'schedule-transfer' ? (
               <section className={styles.viewPanel} aria-labelledby="schedule-transfer-heading" data-testid="dashboard-view-schedule-transfer">
-                <h2 className={styles.sectionTitle} id="schedule-transfer-heading" data-testid="schedule-transfer-heading">Schedule transfer</h2>
+                <header className={styles.viewHeader} data-testid="schedule-transfer-view-header">
+                  <h2 className={styles.sectionTitle} id="schedule-transfer-heading" data-testid="schedule-transfer-heading">Schedule transfer</h2>
+                </header>
                 <section className={styles.actionCard} data-testid="schedule-transfer-card">
                   <p className={styles.actionCopy} data-testid="schedule-transfer-copy">Choose a future local date and time. Funds are not reserved and all rules are checked again when the transfer is due.</p>
                   <form className={styles.form} onSubmit={handleScheduleTransfer} data-testid="schedule-transfer-form">
@@ -1257,10 +1275,10 @@ export function Dashboard() {
 
             {activeView === 'scheduled-transfers' ? (
               <section className={styles.viewPanel} aria-labelledby="scheduled-transfers-heading" data-testid="dashboard-view-scheduled-transfers">
-                <div className={styles.sectionHeading} data-testid="scheduled-transfers-heading-row">
+                <header className={`${styles.sectionHeading} ${styles.viewHeader}`} data-testid="scheduled-transfers-heading-row">
                   <h2 className={styles.sectionTitle} id="scheduled-transfers-heading" data-testid="scheduled-transfers-heading">Scheduled transfers</h2>
                   <button className={styles.refreshButton} type="button" onClick={() => void loadScheduledTransfers()} data-testid="scheduled-transfers-refresh">Refresh</button>
-                </div>
+                </header>
                 {schedulesStatus === 'loading' ? <p className={styles.state} role="status" data-testid="scheduled-transfers-loading">Loading scheduled transfers…</p> : null}
                 {schedulesStatus === 'error' ? <p className={styles.error} role="alert" data-testid="scheduled-transfers-error">{schedulesError}</p> : null}
                 {schedulesStatus === 'ready' && scheduledTransfers.length === 0 ? <p className={styles.emptyState} data-testid="scheduled-transfers-empty">No scheduled transfers.</p> : null}
@@ -1281,7 +1299,7 @@ export function Dashboard() {
 
             {activeView === 'cards' ? (
               <section className={styles.viewPanel} aria-labelledby="cards-heading" data-testid="dashboard-view-cards">
-                <div className={styles.sectionHeading} data-testid="cards-heading-row"><h2 className={styles.sectionTitle} id="cards-heading" data-testid="cards-heading">Cards</h2><button className={styles.refreshButton} type="button" onClick={() => void loadCards()} data-testid="cards-refresh">Refresh</button></div>
+                <header className={`${styles.sectionHeading} ${styles.viewHeader}`} data-testid="cards-heading-row"><h2 className={styles.sectionTitle} id="cards-heading" data-testid="cards-heading">Cards</h2><button className={styles.refreshButton} type="button" onClick={() => void loadCards()} data-testid="cards-refresh">Refresh</button></header>
                 <section className={styles.actionCard} data-testid="card-open-section">
                   <h3 data-testid="card-open-heading">Open a debit card</h3>
                   <form className={styles.form} onSubmit={handleOpenCard} data-testid="card-open-form">
@@ -1298,7 +1316,7 @@ export function Dashboard() {
                 {cardsStatus === 'loading' ? <p className={styles.state} role="status" data-testid="cards-loading">Loading cards…</p> : null}
                 {cardsStatus === 'error' ? <p className={styles.error} role="alert" data-testid="cards-error">{cardsError}</p> : null}
                 {cardsStatus === 'ready' && cards.length === 0 ? <p className={styles.emptyState} data-testid="cards-empty">No cards yet.</p> : null}
-                <div className={styles.accountList} data-testid="cards-list">
+                <div className={`${styles.accountList} ${styles.cardList}`} data-testid="cards-list">
                   {cards.map((card) => (
                     <article className={styles.accountCard} key={card.id} data-testid={`card-row-${card.id}`}>
                       <div className={styles.accountCardTop} data-testid={`card-header-${card.id}`}><strong data-testid={`card-masked-number-${card.id}`}>{card.maskedNumber}</strong><span className={styles.statusBadge} data-testid={`card-status-${card.id}`}>{card.status}</span></div>
