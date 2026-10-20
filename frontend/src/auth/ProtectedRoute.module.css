@@ -5,8 +5,8 @@
   place-items: center;
   padding: 1rem;
   background:
-    radial-gradient(circle at 12% 0%, rgba(37, 99, 235, 0.2), transparent 34rem),
-    linear-gradient(145deg, var(--dashboard-background), #071a31 52%, #041022);
+    radial-gradient(circle at 12% 0%, rgba(134, 188, 37, 0.1), transparent 34rem),
+    linear-gradient(145deg, var(--dashboard-background), #090909 52%, #020202);
   color: var(--dashboard-foreground);
 }
 

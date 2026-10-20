@@ -1606,6 +1606,8 @@ describe('authenticated banking API against isolated SQLite', { concurrency: fal
 
     const primaryHistory = await primary.client.request(`/api/accounts/${joint.id}/transactions`);
     const coOwnerHistory = await coOwner.client.request(`/api/accounts/${joint.id}/transactions`);
+    assertJson(primaryHistory, 200);
+    assertJson(coOwnerHistory, 200);
     assert.deepEqual(coOwnerHistory.body, primaryHistory.body);
     assert.deepEqual(
       primaryHistory.body.transactions.map(({ direction }) => direction).sort(),
@@ -1615,6 +1617,16 @@ describe('authenticated banking API against isolated SQLite', { concurrency: fal
       new Set(primaryHistory.body.transactions.map(({ id }) => id)),
       new Set([sentByPrimary.body.id, sentByCoOwner.body.id, receivedByJoint.body.id]),
     );
+    for (let index = 1; index < primaryHistory.body.transactions.length; index += 1) {
+      const newer = primaryHistory.body.transactions[index - 1];
+      const older = primaryHistory.body.transactions[index];
+      const newerTime = Date.parse(newer.createdAt);
+      const olderTime = Date.parse(older.createdAt);
+      assert.ok(
+        newerTime > olderTime || (newerTime === olderTime && newer.id >= older.id),
+        'transaction history must be ordered newest-first with a deterministic ID tie-breaker',
+      );
+    }
 
     const updatedPrimaryList = await primary.client.request('/api/accounts');
     const updatedCoOwnerList = await coOwner.client.request('/api/accounts');

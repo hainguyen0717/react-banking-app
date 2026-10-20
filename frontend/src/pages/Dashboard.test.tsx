@@ -10,6 +10,35 @@ const accounts = [
   { id: 'account-2', accountNumber: 'EXB-000000002', customerId: 'customer-1', ownershipType: 'JOINT', owners: [{ id: 'customer-1', email: 'ada@example.com', firstName: 'Ada', lastName: 'Lovelace' }, { id: 'customer-2', email: 'grace@example.com', firstName: 'Grace', lastName: 'Hopper' }], type: 'SAVINGS', displayName: 'Goals', balanceCents: 5000, currency: 'AUD', createdAt: '2026-10-14T00:00:01Z', updatedAt: '2026-10-14T00:00:01Z' },
 ] as const;
 
+const cards = [
+  { id: 'card-locked', accountId: 'account-1', maskedNumber: '•••• 1111', status: 'LOCKED', createdAt: '2026-10-19T01:00:00Z', updatedAt: '2026-10-19T01:00:00Z', account: { accountNumber: 'EXB-000000001', displayName: null, type: 'EVERYDAY' }, transactions: [] },
+  { id: 'card-active', accountId: 'account-2', maskedNumber: '•••• 4242', status: 'ACTIVE', createdAt: '2026-10-18T01:00:00Z', updatedAt: '2026-10-18T01:00:00Z', account: { accountNumber: 'EXB-000000002', displayName: 'Goals', type: 'SAVINGS' }, transactions: [] },
+] as const;
+
+const overviewTransactions = {
+  'account-1': [
+    { id: 'transaction-sent', method: 'PAYID', direction: 'SENT', amountCents: 2500, description: 'Lunch', counterpartyAccountNumber: null, counterpartyLabel: 'Grace Hopper', customerReference: null, createdAt: '2026-10-19T08:00:00Z' },
+    { id: 'transaction-old', method: 'BPAY', direction: 'SENT', amountCents: 1000, description: null, counterpartyAccountNumber: null, counterpartyLabel: 'Utility Co', customerReference: '123', createdAt: '2026-10-18T08:00:00Z' },
+  ],
+  'account-2': [
+    { id: 'transaction-received', method: 'TRANSFER', direction: 'RECEIVED', amountCents: 5000, description: null, counterpartyAccountNumber: 'EXB-000000003', counterpartyLabel: 'EXB-000000003', customerReference: null, createdAt: '2026-10-19T09:00:00Z' },
+  ],
+} as const;
+
+function mockOverviewFetch(options: { accountList?: unknown[]; cardList?: unknown[]; transactions?: Record<string, readonly unknown[]> } = {}) {
+  const accountList = options.accountList ?? accounts;
+  const cardList = options.cardList ?? cards;
+  const transactions: Record<string, readonly unknown[]> = options.transactions ?? overviewTransactions;
+  return vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
+    const url = String(input);
+    if (url.endsWith('/api/accounts')) return Promise.resolve(response({ accounts: accountList }));
+    if (url.endsWith('/api/cards')) return Promise.resolve(response({ cards: cardList }));
+    const match = url.match(/\/api\/accounts\/([^/]+)\/transactions$/);
+    if (match) return Promise.resolve(response({ transactions: transactions[match[1]] ?? [] }));
+    return Promise.resolve(response({}));
+  });
+}
+
 function response(body: unknown, status = 200) {
   return { ok: status >= 200 && status < 300, status, json: async () => body } as Response;
 }
@@ -53,16 +82,17 @@ afterEach(() => {
 
 describe('Dashboard navigation', () => {
   it.each(['/dashboard', '/dashboard?view=unknown'])(
-    'falls back to the accounts view for %s',
+    'falls back to the overview for %s',
     async (initialEntry) => {
-      vi.spyOn(globalThis, 'fetch').mockResolvedValue(response({ accounts }));
+      mockOverviewFetch();
       renderDashboard(initialEntry);
 
-      expect(await screen.findByTestId('dashboard-view-accounts')).toBeInTheDocument();
-      expect(screen.getByTestId('dashboard-view-accounts-heading')).toHaveTextContent('Accounts overview');
+      expect(await screen.findByTestId('dashboard-view-overview')).toBeInTheDocument();
+      expect(screen.getByTestId('overview-greeting')).toHaveTextContent(/Good (morning|afternoon|evening), Ada\./);
+      expect(screen.getByTestId('overview-greeting-name')).toHaveTextContent('Ada.');
       expect(screen.queryByTestId('dashboard-view-new-account')).not.toBeInTheDocument();
       expect(screen.queryByTestId('dashboard-view-transfer')).not.toBeInTheDocument();
-      expect(screen.getByTestId('dashboard-nav-accounts-overview')).toHaveAttribute('aria-current', 'page');
+      expect(screen.getByTestId('dashboard-nav-overview')).toHaveAttribute('aria-current', 'page');
     },
   );
 
@@ -80,30 +110,31 @@ describe('Dashboard navigation', () => {
   });
 
   it('uses grouped semantic navigation, exact hrefs, aria-current and stable layout locators', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(response({ accounts }));
+    mockOverviewFetch();
     renderDashboard();
-    await screen.findByTestId('account-card-account-1');
+    await screen.findByTestId('overview-featured-card-card-active');
 
     expect(screen.getByTestId('dashboard-layout')).toBeInTheDocument();
     expect(screen.getByTestId('dashboard-sidebar')).toBeInTheDocument();
+    expect(screen.getByTestId('dashboard-sidebar-menu')).toContainElement(screen.getByTestId('dashboard-function-nav'));
+    expect(screen.getByTestId('dashboard-sidebar-brand')).not.toContainElement(screen.getByTestId('dashboard-function-nav'));
+    expect(screen.getByTestId('dashboard-brand')).toHaveTextContent('DBank');
+    expect(screen.getByTestId('dashboard-brand-accent')).toHaveTextContent('.');
     expect(screen.getByTestId('dashboard-content')).toHaveAttribute('id', 'dashboard-content');
     expect(screen.getByTestId('dashboard-skip-link')).toHaveAttribute('href', '#dashboard-content');
     expect(screen.getByRole('navigation', { name: 'Dashboard functions' })).toBe(screen.getByTestId('dashboard-function-nav'));
 
-    const accountsGroup = screen.getByTestId('dashboard-nav-group-accounts');
-    const cardsDestination = screen.getByTestId('dashboard-nav-cards-standalone');
-    const paymentsDestination = screen.getByTestId('dashboard-nav-payments-standalone');
-    const transferGroup = screen.getByTestId('dashboard-nav-group-transfer');
-    expect(within(accountsGroup).getByRole('heading', { name: 'Accounts' })).toBe(screen.getByTestId('dashboard-nav-group-accounts-label'));
-    expect(within(accountsGroup).getByRole('list')).toBeInTheDocument();
-    expect(within(transferGroup).getByRole('heading', { name: 'Transfer' })).toBe(screen.getByTestId('dashboard-nav-group-transfer-label'));
-    expect(within(transferGroup).getByRole('list')).toBeInTheDocument();
-    expect(within(accountsGroup).queryByTestId('dashboard-nav-cards')).not.toBeInTheDocument();
-    expect(within(cardsDestination).getByTestId('dashboard-nav-cards-item')).toContainElement(screen.getByTestId('dashboard-nav-cards'));
-    expect(accountsGroup.compareDocumentPosition(cardsDestination) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(cardsDestination.compareDocumentPosition(paymentsDestination) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(paymentsDestination.compareDocumentPosition(transferGroup) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    const primaryGroup = screen.getByTestId('dashboard-nav-group-primary');
+    const manageGroup = screen.getByTestId('dashboard-nav-group-manage');
+    const settingsGroup = screen.getByTestId('dashboard-nav-group-settings');
+    expect(within(primaryGroup).getByRole('heading', { name: 'Primary' })).toBe(screen.getByTestId('dashboard-nav-group-primary-label'));
+    expect(within(primaryGroup).getByRole('list')).toBeInTheDocument();
+    expect(within(manageGroup).getByRole('heading', { name: 'Manage' })).toBeInTheDocument();
+    expect(within(settingsGroup).getByRole('heading', { name: 'Settings' })).toBeInTheDocument();
+    expect(primaryGroup.compareDocumentPosition(manageGroup) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(manageGroup.compareDocumentPosition(settingsGroup) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 
+    expect(screen.getByTestId('dashboard-nav-overview')).toHaveAttribute('href', '/dashboard?view=overview');
     expect(screen.getByTestId('dashboard-nav-accounts-overview')).toHaveAttribute('href', '/dashboard?view=accounts');
     expect(screen.getByTestId('dashboard-nav-new-account')).toHaveAttribute('href', '/dashboard?view=new-account');
     expect(screen.getByTestId('dashboard-nav-new-joint-account')).toHaveAttribute('href', '/dashboard?view=new-joint-account');
@@ -111,9 +142,88 @@ describe('Dashboard navigation', () => {
     expect(screen.getByTestId('dashboard-nav-payments')).toHaveAttribute('href', '/dashboard?view=payments');
     expect(screen.getByTestId('dashboard-nav-transfer')).toHaveAttribute('href', '/dashboard?view=transfer');
     expect(screen.getByTestId('dashboard-nav-delay-simulator')).toHaveAttribute('href', '/dashboard?view=delay-simulator');
-    expect(screen.getByTestId('dashboard-nav-accounts-overview')).toHaveAttribute('aria-current', 'page');
+    expect(screen.getByTestId('dashboard-nav-overview')).toHaveAttribute('aria-current', 'page');
+    expect(screen.getByTestId('dashboard-nav-accounts-overview')).not.toHaveAttribute('aria-current');
     expect(screen.getByTestId('dashboard-nav-new-account')).not.toHaveAttribute('aria-current');
     expect(screen.queryByTestId('dashboard-actions')).not.toBeInTheDocument();
+  });
+
+  it('composes live account, card, recent activity and weekly spend data on the overview', async () => {
+    mockOverviewFetch();
+    renderDashboard('/dashboard?view=overview');
+
+    expect(await screen.findByTestId('overview-featured-card-card-active')).toBeInTheDocument();
+    expect(screen.getByTestId('overview-current-date')).not.toBeEmptyDOMElement();
+    expect(screen.getByTestId('overview-send-money')).toHaveAttribute('href', '/dashboard?view=transfer');
+    expect(screen.getByTestId('overview-total-balance')).toHaveTextContent('$1,000,050.00');
+    expect(screen.getByTestId('overview-account-count')).toHaveTextContent('Across 2 accounts');
+    expect(screen.getByTestId('overview-featured-card-number-card-active')).toHaveTextContent('•••• 4242');
+    expect(screen.getByTestId('overview-activity-account-2-transaction-received-received')).toHaveTextContent('Received into Goals');
+    expect(screen.getByTestId('overview-activity-account-1-transaction-sent-sent')).toHaveTextContent('Sent from Everyday');
+    expect(screen.getByTestId('overview-activity-account-1-transaction-old-sent')).toBeInTheDocument();
+    expect(screen.getByTestId('overview-weekly-spend-total')).toHaveTextContent('$25.00');
+    expect(screen.getAllByTestId(/^overview-weekday-\d{4}-\d{2}-\d{2}$/)).toHaveLength(7);
+  });
+
+  it('shows explicit empty states when the customer has no overview records', async () => {
+    mockOverviewFetch({ accountList: [], cardList: [], transactions: {} });
+    renderDashboard('/dashboard?view=overview');
+
+    expect(await screen.findByTestId('overview-card-empty')).toBeInTheDocument();
+    expect(screen.getByTestId('overview-total-balance')).toHaveTextContent('$0.00');
+    expect(screen.getByTestId('overview-account-count')).toHaveTextContent('Across 0 accounts');
+    expect(screen.getByTestId('overview-activity-empty')).toBeInTheDocument();
+    expect(screen.getByTestId('overview-spend-empty')).toBeInTheDocument();
+  });
+
+  it('does not present a zero balance while account data is still loading', async () => {
+    let resolveAccounts: ((value: Response) => void) | undefined;
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
+      const url = String(input);
+      if (url.endsWith('/api/accounts')) return new Promise<Response>((resolve) => { resolveAccounts = resolve; });
+      if (url.endsWith('/api/cards')) return Promise.resolve(response({ cards: [] }));
+      if (url.includes('/transactions')) return Promise.resolve(response({ transactions: [] }));
+      return Promise.resolve(response({}));
+    });
+    renderDashboard('/dashboard?view=overview');
+
+    expect(await screen.findByTestId('overview-balance-loading')).toBeInTheDocument();
+    expect(screen.queryByTestId('overview-total-balance')).not.toBeInTheDocument();
+    await act(async () => { resolveAccounts?.(response({ accounts })); });
+    expect(await screen.findByTestId('overview-total-balance')).toHaveTextContent('$1,000,050.00');
+  });
+
+  it('keeps card and history failures separate and offers an activity retry', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
+      const url = String(input);
+      if (url.endsWith('/api/accounts')) return Promise.resolve(response({ accounts }));
+      if (url.endsWith('/api/cards')) return Promise.reject(new Error('Cards unavailable'));
+      if (url.includes('/transactions')) return Promise.reject(new Error('History unavailable'));
+      return Promise.resolve(response({}));
+    });
+    renderDashboard('/dashboard?view=overview');
+
+    expect(await screen.findByTestId('overview-card-error')).toHaveTextContent('Cards unavailable');
+    expect(screen.getByTestId('overview-error')).toHaveTextContent('History unavailable');
+    expect(screen.getByTestId('overview-retry')).toBeEnabled();
+    expect(screen.getByTestId('overview-total-balance')).toHaveTextContent('$1,000,050.00');
+  });
+
+  it('drills activity into an owned account history', async () => {
+    mockOverviewFetch();
+    renderDashboard('/dashboard?view=overview');
+    const activity = await screen.findByTestId('overview-activity-account-1-transaction-sent-sent');
+    expect(activity).toHaveAttribute('href', '/dashboard?view=accounts&accountId=account-1');
+    fireEvent.click(activity);
+    expect(await screen.findByTestId('transactions-panel-account-1')).toBeInTheDocument();
+  });
+
+  it('ignores an unknown account query instead of requesting or expanding it', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(response({ accounts }));
+    renderDashboard('/dashboard?view=accounts&accountId=not-owned');
+    await screen.findByTestId('account-card-account-1');
+    expect(screen.queryByTestId('transactions-panel-not-owned')).not.toBeInTheDocument();
+    expect(fetchMock.mock.calls.some(([input]) => String(input).includes('/not-owned/transactions'))).toBe(false);
   });
 
   it('preserves account, joint-account and transfer form state across in-session view changes', async () => {

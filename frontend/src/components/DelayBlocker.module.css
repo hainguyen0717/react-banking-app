@@ -7,7 +7,7 @@
   min-height: 12rem;
   padding: 1rem;
   border-radius: inherit;
-  background: rgba(1, 7, 18, 0.68);
+  background: rgba(0, 0, 0, 0.7);
 }
 
 .dialog {
@@ -32,7 +32,7 @@
   width: 2.5rem;
   height: 2.5rem;
   flex: none;
-  border: 3px solid rgba(186, 230, 253, 0.26);
+  border: 3px solid rgba(134, 188, 37, 0.22);
   border-top-color: var(--dashboard-accent);
   border-radius: 50%;
   animation: delay-spin 800ms linear infinite;

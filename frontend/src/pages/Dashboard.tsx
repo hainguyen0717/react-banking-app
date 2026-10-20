@@ -2,6 +2,7 @@ import { FormEvent, KeyboardEvent, MouseEvent as ReactMouseEvent, useCallback, u
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { apiRequest } from '../lib/api';
 import { ACCOUNT_TYPES, AccountType, formatAud, parseAudToCents } from '../lib/banking';
+import { currentWeekSpend, mergeAccountTransactions, selectFeaturedCard, totalAccessibleBalance, uniqueAccounts } from '../lib/dashboardOverview';
 import { DEFAULT_DELAY_SETTING, DELAY_SCOPES, DelayScope, DelaySetting, formatDelayRange, isDelaySetting, parseDelaySeconds, sampleInclusiveDelay, shouldDelayUiNavigation } from '../lib/delay';
 import { delayActivityStore, useDelayActivity } from '../lib/delayActivity';
 import { useAuth } from '../auth/AuthContext';
@@ -85,14 +86,17 @@ interface Card {
   accountId: string;
   maskedNumber: string;
   status: 'ACTIVE' | 'LOCKED' | 'DISABLED';
+  createdAt: string;
+  updatedAt: string;
   account: { accountNumber: string; displayName: string | null; type: AccountType };
   transactions: CardTransaction[];
 }
 
 type HistoryState = Record<string, { status: 'loading' | 'ready' | 'error'; transactions: Transaction[]; error?: string }>;
-type DashboardView = 'accounts' | 'new-account' | 'new-joint-account' | 'payments' | 'transfer' | 'profile' | 'schedule-transfer' | 'scheduled-transfers' | 'cards' | 'delay-simulator';
+type DashboardView = 'overview' | 'accounts' | 'new-account' | 'new-joint-account' | 'payments' | 'transfer' | 'profile' | 'schedule-transfer' | 'scheduled-transfers' | 'cards' | 'delay-simulator';
 type FormMessage = { kind: 'success' | 'error'; text: string };
-const API_LOADING_DASHBOARD_VIEWS = new Set<DashboardView>(['scheduled-transfers', 'cards']);
+const API_LOADING_DASHBOARD_VIEWS = new Set<DashboardView>(['overview', 'scheduled-transfers', 'cards']);
+const VALID_DASHBOARD_VIEWS: DashboardView[] = ['overview', 'accounts', 'new-account', 'new-joint-account', 'payments', 'transfer', 'profile', 'schedule-transfer', 'scheduled-transfers', 'cards', 'delay-simulator'];
 
 function labelAccountType(type: AccountType) {
   return type === 'EVERYDAY' ? 'Everyday transactions' : type.charAt(0) + type.slice(1).toLowerCase();
@@ -103,6 +107,10 @@ export function Dashboard() {
   const auth = useAuth();
   const delayActivity = useDelayActivity();
   const [searchParams] = useSearchParams();
+  const requestedView = searchParams.get('view');
+  const activeView: DashboardView = VALID_DASHBOARD_VIEWS.includes(requestedView as DashboardView)
+    ? requestedView as DashboardView
+    : 'overview';
   const customer = auth.customer;
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [accountsStatus, setAccountsStatus] = useState<'loading' | 'ready' | 'error'>('loading');
@@ -124,6 +132,9 @@ export function Dashboard() {
   const [isTransferring, setIsTransferring] = useState(false);
   const [expandedAccountId, setExpandedAccountId] = useState<string | null>(null);
   const [history, setHistory] = useState<HistoryState>({});
+  const [overviewHistory, setOverviewHistory] = useState<Record<string, Transaction[]>>({});
+  const [overviewHistoryStatus, setOverviewHistoryStatus] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [overviewHistoryError, setOverviewHistoryError] = useState('');
   const [logoutError, setLogoutError] = useState<string | null>(null);
   const [profileFirstName, setProfileFirstName] = useState(customer?.firstName ?? '');
   const [profileLastName, setProfileLastName] = useState(customer?.lastName ?? '');
@@ -225,6 +236,7 @@ export function Dashboard() {
     setCardsError('');
     try {
       const response = await apiRequest<{ cards: Card[] }>('/api/cards');
+      if (!Array.isArray(response.cards)) throw new Error('The card service returned an invalid response.');
       setCards(response.cards);
       setCardsStatus('ready');
     } catch (error) {
@@ -253,6 +265,23 @@ export function Dashboard() {
     }
   }, [customer]);
 
+  const loadOverviewHistory = useCallback(async (currentAccounts: Account[]) => {
+    if (!customer) return;
+    setOverviewHistoryStatus('loading');
+    setOverviewHistoryError('');
+    try {
+      const entries = await Promise.all(uniqueAccounts(currentAccounts).map(async (account) => {
+        const response = await apiRequest<{ transactions: Transaction[] }>(`/api/accounts/${account.id}/transactions`);
+        return [account.id, response.transactions] as const;
+      }));
+      setOverviewHistory(Object.fromEntries(entries));
+      setOverviewHistoryStatus('ready');
+    } catch (error) {
+      setOverviewHistoryStatus('error');
+      setOverviewHistoryError(error instanceof Error ? error.message : 'Recent activity could not be loaded.');
+    }
+  }, [customer]);
+
   useEffect(() => {
     void loadAccounts();
   }, [loadAccounts]);
@@ -268,20 +297,30 @@ export function Dashboard() {
   }, []);
 
   useEffect(() => {
-    const view = searchParams.get('view');
     const handoffActivityId = navigationActivityRef.current;
     const finishCapturedHandoff = () => {
       delayActivityStore.finish(handoffActivityId);
       if (navigationActivityRef.current === handoffActivityId) navigationActivityRef.current = null;
     };
 
-    if (view === 'scheduled-transfers') {
+    if (activeView === 'overview' && accountsStatus === 'ready') {
+      void Promise.all([loadCards(), loadOverviewHistory(accounts)]).finally(finishCapturedHandoff);
+    }
+    if (activeView === 'scheduled-transfers') {
       void loadScheduledTransfers().finally(finishCapturedHandoff);
     }
-    if (view === 'cards') {
+    if (activeView === 'cards') {
       void loadCards().finally(finishCapturedHandoff);
     }
-  }, [searchParams, loadScheduledTransfers, loadCards]);
+  }, [activeView, accounts, accountsStatus, loadScheduledTransfers, loadCards, loadOverviewHistory]);
+
+  useEffect(() => {
+    if (activeView !== 'accounts' || accountsStatus !== 'ready') return;
+    const requestedAccountId = searchParams.get('accountId');
+    if (!requestedAccountId || !accounts.some(({ id }) => id === requestedAccountId) || expandedAccountId === requestedAccountId) return;
+    setExpandedAccountId(requestedAccountId);
+    void loadTransactions(requestedAccountId);
+  }, [activeView, accounts, accountsStatus, expandedAccountId, loadTransactions, searchParams]);
 
   useEffect(() => {
     if (disableCardId) {
@@ -604,6 +643,7 @@ export function Dashboard() {
     event: ReactMouseEvent<HTMLAnchorElement>,
     view: DashboardView,
     label: string,
+    target = `/dashboard?view=${view}`,
   ) {
     if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
     if (pendingNavigation?.view === view) {
@@ -627,7 +667,7 @@ export function Dashboard() {
     const navigationSequence = ++navigationSequenceRef.current;
 
     const captured = {
-      target: `/dashboard?view=${view}`,
+      target,
       view,
       label,
       sampledSeconds,
@@ -659,12 +699,15 @@ export function Dashboard() {
     }
   }
 
-  const totalBalance = accounts.reduce((total, account) => total + account.balanceCents, 0);
-  const requestedView = searchParams.get('view');
-  const validViews: DashboardView[] = ['accounts', 'new-account', 'new-joint-account', 'payments', 'transfer', 'profile', 'schedule-transfer', 'scheduled-transfers', 'cards', 'delay-simulator'];
-  const activeView: DashboardView = validViews.includes(requestedView as DashboardView)
-    ? requestedView as DashboardView
-    : 'accounts';
+  const totalBalance = totalAccessibleBalance(accounts);
+  const consolidatedActivity = mergeAccountTransactions(accounts, overviewHistory);
+  const recentActivity = consolidatedActivity.slice(0, 3);
+  const weeklySpend = currentWeekSpend(consolidatedActivity);
+  const maximumDailySpend = Math.max(...weeklySpend.days.map(({ amountCents }) => amountCents), 1);
+  const featuredCard = selectFeaturedCard(cards);
+  const now = new Date();
+  const currentDate = new Intl.DateTimeFormat('en-AU', { weekday: 'long', day: 'numeric', month: 'long' }).format(now);
+  const greeting = now.getHours() < 12 ? 'Good morning' : now.getHours() < 18 ? 'Good afternoon' : 'Good evening';
   const delayRangeHasError = delayMessage?.kind === 'error'
     && delayMessage.text.startsWith('Enter whole-number minimum');
 
@@ -672,7 +715,6 @@ export function Dashboard() {
     <div className={styles.shell} data-testid="dashboard-shell">
       <a className={styles.skipLink} href="#dashboard-content" data-testid="dashboard-skip-link">Skip to dashboard content</a>
       <header className={styles.topbar} data-testid="dashboard-header">
-        <div className={styles.brand} data-testid="dashboard-brand">EXPRESS / BANK</div>
         <section className={styles.delayBanner} aria-label="Test delay status" data-testid="delay-banner">
           <div className={styles.delayBannerCopy} data-testid="delay-banner-copy">
             <strong data-testid="delay-banner-status">
@@ -696,91 +738,188 @@ export function Dashboard() {
             <button className={styles.bannerReset} type="button" onClick={() => void handleDelayReset()} disabled={delayStatus !== 'ready' || (delaySetting.minSeconds === 0 && delaySetting.maxSeconds === 0)} data-testid="delay-banner-reset">Reset to 0s</button>
           </div>
         </section>
-        <div className={styles.customerMeta} data-testid="dashboard-customer-meta">
-          <span className={styles.customerName} data-testid="dashboard-customer-name">{customer.firstName} {customer.lastName}</span>
-          <button className={styles.logoutButton} type="button" onClick={handleLogout} data-testid="dashboard-logout">Log out</button>
-          {logoutError ? <span className={styles.error} role="alert" data-testid="dashboard-logout-error">{logoutError}</span> : null}
-        </div>
       </header>
 
       <main className={styles.main} data-testid="dashboard-main">
-        <section className={styles.summary} aria-labelledby="dashboard-title" data-testid="dashboard-summary">
-          <div className={styles.summaryCopy} data-testid="dashboard-summary-copy">
-            <p className={styles.eyebrow} data-testid="dashboard-eyebrow">Financial overview</p>
-            <h1 className={styles.title} id="dashboard-title" data-testid="dashboard-title">Good day, {customer.firstName}.</h1>
-            <p className={styles.subtitle} data-testid="dashboard-subtitle">Create test accounts, move funds and inspect each recorded transfer.</p>
-          </div>
-          <div className={styles.totalCard} data-testid="dashboard-total-card">
-            <span className={styles.totalLabel} data-testid="dashboard-total-label">Total available balance</span>
-            <strong className={styles.totalValue} data-testid="dashboard-total-balance">{formatAud(totalBalance)}</strong>
-            <span className={styles.totalCurrency} data-testid="dashboard-total-currency">Across {accounts.length} AUD {accounts.length === 1 ? 'account' : 'accounts'}</span>
-          </div>
-        </section>
-
         <div className={styles.dashboardLayout} data-testid="dashboard-layout">
           <aside className={styles.sidebar} data-testid="dashboard-sidebar">
-            <nav className={styles.functionNav} aria-label="Dashboard functions" data-testid="dashboard-function-nav">
-              <section className={styles.navGroup} aria-labelledby="dashboard-nav-accounts-label" data-testid="dashboard-nav-group-accounts">
-                <h2 className={styles.navGroupLabel} id="dashboard-nav-accounts-label" data-testid="dashboard-nav-group-accounts-label">Accounts</h2>
-                <ul className={styles.navList} data-testid="dashboard-nav-group-accounts-list">
-                  <li data-testid="dashboard-nav-accounts-overview-item">
-                    <Link className={styles.navLink} to="/dashboard?view=accounts" onClick={(event) => handleDashboardNavigation(event, 'accounts', 'Accounts overview')} aria-current={activeView === 'accounts' ? 'page' : undefined} data-testid="dashboard-nav-accounts-overview">Accounts overview</Link>
+            <div className={styles.sidebarBrand} data-testid="dashboard-sidebar-brand">
+              <span className={styles.brand} data-testid="dashboard-brand">DBank</span>
+              <span className={styles.brandDot} aria-hidden="true" data-testid="dashboard-brand-accent">.</span>
+            </div>
+            <div className={styles.sidebarMenu} data-testid="dashboard-sidebar-menu">
+              <nav className={styles.functionNav} aria-label="Dashboard functions" data-testid="dashboard-function-nav">
+              <section className={styles.navGroup} aria-labelledby="dashboard-nav-primary-label" data-testid="dashboard-nav-group-primary">
+                <h2 className={styles.navGroupLabel} id="dashboard-nav-primary-label" data-testid="dashboard-nav-group-primary-label">Primary</h2>
+                <ul className={styles.navList} data-testid="dashboard-nav-group-primary-list">
+                  <li data-testid="dashboard-nav-overview-item">
+                    <Link className={styles.navLink} to="/dashboard?view=overview" onClick={(event) => handleDashboardNavigation(event, 'overview', 'Overview')} aria-current={activeView === 'overview' ? 'page' : undefined} data-testid="dashboard-nav-overview">Overview</Link>
                   </li>
+                  <li data-testid="dashboard-nav-accounts-overview-item">
+                    <Link className={styles.navLink} to="/dashboard?view=accounts" onClick={(event) => handleDashboardNavigation(event, 'accounts', 'Accounts')} aria-current={activeView === 'accounts' ? 'page' : undefined} data-testid="dashboard-nav-accounts-overview">Accounts</Link>
+                  </li>
+                  <li data-testid="dashboard-nav-cards-item">
+                    <Link className={styles.navLink} to="/dashboard?view=cards" onClick={(event) => handleDashboardNavigation(event, 'cards', 'Cards')} aria-current={activeView === 'cards' ? 'page' : undefined} data-testid="dashboard-nav-cards">Cards</Link>
+                  </li>
+                  <li data-testid="dashboard-nav-payments-item">
+                    <Link className={styles.navLink} to="/dashboard?view=payments" onClick={(event) => handleDashboardNavigation(event, 'payments', 'Payments')} aria-current={activeView === 'payments' ? 'page' : undefined} data-testid="dashboard-nav-payments">Payments</Link>
+                  </li>
+                  <li data-testid="dashboard-nav-transfer-item">
+                    <Link className={styles.navLink} to="/dashboard?view=transfer" onClick={(event) => handleDashboardNavigation(event, 'transfer', 'Transfer')} aria-current={activeView === 'transfer' ? 'page' : undefined} data-testid="dashboard-nav-transfer">Transfer</Link>
+                  </li>
+                </ul>
+              </section>
+              <section className={styles.navGroup} aria-labelledby="dashboard-nav-manage-label" data-testid="dashboard-nav-group-manage">
+                <h2 className={styles.navGroupLabel} id="dashboard-nav-manage-label" data-testid="dashboard-nav-group-manage-label">Manage</h2>
+                <ul className={styles.navList} data-testid="dashboard-nav-group-manage-list">
                   <li data-testid="dashboard-nav-new-account-item">
                     <Link className={styles.navLink} to="/dashboard?view=new-account" onClick={(event) => handleDashboardNavigation(event, 'new-account', 'New account')} aria-current={activeView === 'new-account' ? 'page' : undefined} data-testid="dashboard-nav-new-account">New account</Link>
                   </li>
                   <li data-testid="dashboard-nav-new-joint-account-item">
                     <Link className={styles.navLink} to="/dashboard?view=new-joint-account" onClick={(event) => handleDashboardNavigation(event, 'new-joint-account', 'New joint account')} aria-current={activeView === 'new-joint-account' ? 'page' : undefined} data-testid="dashboard-nav-new-joint-account">New joint account</Link>
                   </li>
-                </ul>
-              </section>
-              <section className={styles.standaloneNav} aria-label="Cards" data-testid="dashboard-nav-cards-standalone">
-                <ul className={styles.navList} data-testid="dashboard-nav-cards-list">
-                  <li data-testid="dashboard-nav-cards-item">
-                    <Link className={styles.navLink} to="/dashboard?view=cards" onClick={(event) => handleDashboardNavigation(event, 'cards', 'Cards')} aria-current={activeView === 'cards' ? 'page' : undefined} data-testid="dashboard-nav-cards">Cards</Link>
-                  </li>
-                </ul>
-              </section>
-              <section className={styles.standaloneNav} aria-label="Payments" data-testid="dashboard-nav-payments-standalone">
-                <ul className={styles.navList} data-testid="dashboard-nav-payments-list">
-                  <li data-testid="dashboard-nav-payments-item">
-                    <Link className={styles.navLink} to="/dashboard?view=payments" onClick={(event) => handleDashboardNavigation(event, 'payments', 'Payments')} aria-current={activeView === 'payments' ? 'page' : undefined} data-testid="dashboard-nav-payments">Payments</Link>
-                  </li>
-                </ul>
-              </section>
-              <section className={styles.navGroup} aria-labelledby="dashboard-nav-transfer-label" data-testid="dashboard-nav-group-transfer">
-                <h2 className={styles.navGroupLabel} id="dashboard-nav-transfer-label" data-testid="dashboard-nav-group-transfer-label">Transfer</h2>
-                <ul className={styles.navList} data-testid="dashboard-nav-group-transfer-list">
-                  <li data-testid="dashboard-nav-transfer-item">
-                    <Link className={styles.navLink} to="/dashboard?view=transfer" onClick={(event) => handleDashboardNavigation(event, 'transfer', 'Transfer')} aria-current={activeView === 'transfer' ? 'page' : undefined} data-testid="dashboard-nav-transfer">Transfer</Link>
-                  </li>
                   <li data-testid="dashboard-nav-schedule-transfer-item">
-                    <Link className={styles.navLink} to="/dashboard?view=schedule-transfer" onClick={(event) => handleDashboardNavigation(event, 'schedule-transfer', 'Schedule transfer')} aria-current={activeView === 'schedule-transfer' ? 'page' : undefined} data-testid="dashboard-nav-schedule-transfer">Schedule transfer</Link>
+                    <Link className={styles.navLink} to="/dashboard?view=schedule-transfer" onClick={(event) => handleDashboardNavigation(event, 'schedule-transfer', 'Schedule transfer')} aria-current={activeView === 'schedule-transfer' ? 'page' : undefined} data-testid="dashboard-nav-schedule-transfer">Schedule</Link>
                   </li>
                   <li data-testid="dashboard-nav-scheduled-transfers-item">
                     <Link className={styles.navLink} to="/dashboard?view=scheduled-transfers" onClick={(event) => handleDashboardNavigation(event, 'scheduled-transfers', 'Scheduled transfers')} aria-current={activeView === 'scheduled-transfers' ? 'page' : undefined} data-testid="dashboard-nav-scheduled-transfers">Scheduled transfers</Link>
                   </li>
                 </ul>
               </section>
-              <section className={styles.navGroup} aria-labelledby="dashboard-nav-profile-label" data-testid="dashboard-nav-group-profile">
-                <h2 className={styles.navGroupLabel} id="dashboard-nav-profile-label" data-testid="dashboard-nav-group-profile-label">Profile</h2>
-                <ul className={styles.navList} data-testid="dashboard-nav-group-profile-list">
+              <section className={styles.navGroup} aria-labelledby="dashboard-nav-settings-label" data-testid="dashboard-nav-group-settings">
+                <h2 className={styles.navGroupLabel} id="dashboard-nav-settings-label" data-testid="dashboard-nav-group-settings-label">Settings</h2>
+                <ul className={styles.navList} data-testid="dashboard-nav-group-settings-list">
                   <li data-testid="dashboard-nav-profile-item"><Link className={styles.navLink} to="/dashboard?view=profile" onClick={(event) => handleDashboardNavigation(event, 'profile', 'Personal information')} aria-current={activeView === 'profile' ? 'page' : undefined} data-testid="dashboard-nav-profile">Personal information</Link></li>
-                </ul>
-              </section>
-              <section className={styles.navGroup} aria-labelledby="dashboard-nav-test-controls-label" data-testid="dashboard-nav-group-test-controls">
-                <h2 className={styles.navGroupLabel} id="dashboard-nav-test-controls-label" data-testid="dashboard-nav-group-test-controls-label">Test Controls</h2>
-                <ul className={styles.navList} data-testid="dashboard-nav-group-test-controls-list">
                   <li data-testid="dashboard-nav-delay-simulator-item">
-                    <Link className={styles.navLink} to="/dashboard?view=delay-simulator" onClick={(event) => handleDashboardNavigation(event, 'delay-simulator', 'Delay simulator')} aria-current={activeView === 'delay-simulator' ? 'page' : undefined} data-testid="dashboard-nav-delay-simulator">Delay simulator</Link>
+                    <Link className={styles.navLink} to="/dashboard?view=delay-simulator" onClick={(event) => handleDashboardNavigation(event, 'delay-simulator', 'Test controls')} aria-current={activeView === 'delay-simulator' ? 'page' : undefined} data-testid="dashboard-nav-delay-simulator">Test controls</Link>
                   </li>
                 </ul>
               </section>
-            </nav>
+              </nav>
+              <div className={styles.sidebarCustomer} data-testid="dashboard-customer-meta">
+                <span className={styles.customerName} data-testid="dashboard-customer-name">{customer.firstName} {customer.lastName}</span>
+                <button className={styles.logoutButton} type="button" onClick={handleLogout} data-testid="dashboard-logout">Log out</button>
+                {logoutError ? <span className={styles.error} role="alert" data-testid="dashboard-logout-error">{logoutError}</span> : null}
+              </div>
+            </div>
           </aside>
 
           <div className={styles.dashboardContent} id="dashboard-content" tabIndex={-1} aria-busy={delayActivity.active || undefined} data-testid="dashboard-content">
             <div className={styles.dashboardContentInner} {...(delayActivity.active ? { inert: '' } : {})} data-testid="dashboard-content-inner">
+            {activeView === 'overview' ? (
+              <section className={styles.overview} aria-labelledby="overview-heading" data-testid="dashboard-view-overview">
+                <header className={styles.overviewHeader} data-testid="overview-header">
+                  <div className={styles.overviewHeadingCopy} data-testid="overview-heading-copy">
+                    <p className={styles.overviewDate} data-testid="overview-current-date">{currentDate}</p>
+                    <h1 className={styles.overviewGreeting} id="overview-heading" data-testid="overview-greeting">
+                      {greeting},{' '}
+                      <span className={styles.overviewGreetingName} data-testid="overview-greeting-name">{customer.firstName}.</span>
+                    </h1>
+                  </div>
+                  <Link className={styles.primaryAction} to="/dashboard?view=transfer" onClick={(event) => handleDashboardNavigation(event, 'transfer', 'Send money')} data-testid="overview-send-money">Send money</Link>
+                </header>
+
+                {(accountsStatus === 'loading' || overviewHistoryStatus === 'loading' || cardsStatus === 'loading') ? (
+                  <p className={styles.overviewStatus} role="status" data-testid="overview-loading">Loading your overview…</p>
+                ) : null}
+                {overviewHistoryStatus === 'error' ? (
+                  <div className={styles.overviewError} role="alert" data-testid="overview-error">
+                    <span data-testid="overview-error-message">{overviewHistoryError}</span>
+                    <button type="button" onClick={() => void loadOverviewHistory(accounts)} data-testid="overview-retry">Try again</button>
+                  </div>
+                ) : null}
+
+                <div className={styles.overviewTopGrid} data-testid="overview-top-grid">
+                  <article className={`${styles.overviewPanel} ${styles.balancePanel}`} data-testid="overview-balance-card">
+                    <div className={styles.panelHeading} data-testid="overview-balance-heading">
+                      <span className={styles.panelLabel} data-testid="overview-balance-label">Total accessible balance</span>
+                      <span className={styles.currencyBadge} data-testid="overview-balance-currency">AUD</span>
+                    </div>
+                    {accountsStatus === 'loading' ? <p className={styles.state} role="status" data-testid="overview-balance-loading">Loading balance…</p> : null}
+                    {accountsStatus === 'error' ? <p className={styles.error} role="alert" data-testid="overview-balance-error">{accountsError}</p> : null}
+                    {accountsStatus === 'ready' ? (
+                      <>
+                        <strong className={styles.overviewBalance} data-testid="overview-total-balance">{formatAud(totalBalance)}</strong>
+                        <span className={styles.overviewAccountCount} data-testid="overview-account-count">Across {uniqueAccounts(accounts).length} {uniqueAccounts(accounts).length === 1 ? 'account' : 'accounts'}</span>
+                      </>
+                    ) : null}
+                  </article>
+
+                  <article className={`${styles.overviewPanel} ${styles.featuredCardPanel}`} data-testid="overview-featured-card">
+                    <div className={styles.panelHeading} data-testid="overview-featured-heading">
+                      <span className={styles.panelLabel} data-testid="overview-featured-label">Featured card</span>
+                      {featuredCard ? <span className={styles.cardStatus} data-testid={`overview-featured-card-status-${featuredCard.id}`}>{featuredCard.status}</span> : null}
+                    </div>
+                    {cardsStatus === 'loading' ? <p className={styles.state} role="status" data-testid="overview-card-loading">Loading card…</p> : null}
+                    {cardsStatus === 'error' ? <p className={styles.error} role="alert" data-testid="overview-card-error">{cardsError}</p> : null}
+                    {cardsStatus === 'ready' && !featuredCard ? (
+                      <div className={styles.cardEmpty} data-testid="overview-card-empty">
+                        <strong data-testid="overview-card-empty-title">No card to feature</strong>
+                        <Link to="/dashboard?view=cards" onClick={(event) => handleDashboardNavigation(event, 'cards', 'Cards')} data-testid="overview-card-empty-link">Open a demo card</Link>
+                      </div>
+                    ) : null}
+                    {cardsStatus === 'ready' && featuredCard ? (
+                      <div className={styles.featuredCard} data-testid={`overview-featured-card-${featuredCard.id}`}>
+                        <span className={styles.cardBank} data-testid={`overview-featured-card-bank-${featuredCard.id}`}>EXPRESS / BANK</span>
+                        <strong className={styles.cardNumber} data-testid={`overview-featured-card-number-${featuredCard.id}`}>{featuredCard.maskedNumber}</strong>
+                        <span className={styles.cardAccount} data-testid={`overview-featured-card-account-${featuredCard.id}`}>{featuredCard.account.displayName || labelAccountType(featuredCard.account.type)}</span>
+                        <Link className={styles.cardLink} to="/dashboard?view=cards" onClick={(event) => handleDashboardNavigation(event, 'cards', 'Cards')} data-testid={`overview-featured-card-link-${featuredCard.id}`}>Manage cards</Link>
+                      </div>
+                    ) : null}
+                  </article>
+                </div>
+
+                <div className={styles.overviewLowerGrid} data-testid="overview-lower-grid">
+                  <section className={styles.overviewPanel} aria-labelledby="overview-activity-heading" data-testid="overview-recent-activity">
+                    <div className={styles.panelHeading} data-testid="overview-activity-heading-row">
+                      <div data-testid="overview-activity-heading-copy">
+                        <span className={styles.panelKicker} data-testid="overview-activity-kicker">Latest movements</span>
+                        <h2 className={styles.panelTitle} id="overview-activity-heading" data-testid="overview-activity-heading">Recent activity</h2>
+                      </div>
+                      <Link className={styles.panelLink} to="/dashboard?view=accounts" onClick={(event) => handleDashboardNavigation(event, 'accounts', 'Accounts')} data-testid="overview-view-all-activity">View all</Link>
+                    </div>
+                    {overviewHistoryStatus === 'ready' && recentActivity.length === 0 ? <p className={styles.emptyCopy} data-testid="overview-activity-empty">No account activity yet.</p> : null}
+                    <div className={styles.activityList} data-testid="overview-activity-list">
+                      {overviewHistoryStatus === 'ready' ? recentActivity.map((transaction) => {
+                        const activityTarget = `/dashboard?view=accounts&accountId=${encodeURIComponent(transaction.accountId)}`;
+                        return (
+                          <Link className={styles.activityRow} to={activityTarget} onClick={(event) => handleDashboardNavigation(event, 'accounts', `${transaction.accountName} activity`, activityTarget)} key={`${transaction.accountId}-${transaction.id}-${transaction.direction}`} data-testid={`overview-activity-${transaction.accountId}-${transaction.id}-${transaction.direction.toLowerCase()}`}>
+                            <span className={transaction.direction === 'SENT' ? styles.activitySent : styles.activityReceived} aria-hidden="true" data-testid={`overview-activity-icon-${transaction.accountId}-${transaction.id}-${transaction.direction.toLowerCase()}`}>{transaction.direction === 'SENT' ? '−' : '+'}</span>
+                            <span className={styles.activityCopy} data-testid={`overview-activity-copy-${transaction.accountId}-${transaction.id}-${transaction.direction.toLowerCase()}`}>
+                              <strong data-testid={`overview-activity-counterparty-${transaction.accountId}-${transaction.id}-${transaction.direction.toLowerCase()}`}>{transaction.counterpartyLabel}</strong>
+                              <span data-testid={`overview-activity-context-${transaction.accountId}-${transaction.id}-${transaction.direction.toLowerCase()}`}>{transaction.direction === 'SENT' ? 'Sent from' : 'Received into'} {transaction.accountName}</span>
+                            </span>
+                            <span className={transaction.direction === 'SENT' ? styles.sentAmount : styles.receivedAmount} data-testid={`overview-activity-amount-${transaction.accountId}-${transaction.id}-${transaction.direction.toLowerCase()}`}>{transaction.direction === 'SENT' ? '−' : '+'}{formatAud(transaction.amountCents)}</span>
+                          </Link>
+                        );
+                      }) : null}
+                    </div>
+                  </section>
+
+                  <section className={styles.overviewPanel} aria-labelledby="overview-spend-heading" data-testid="overview-weekly-spend">
+                    <div className={styles.panelHeading} data-testid="overview-spend-heading-row">
+                      <div data-testid="overview-spend-heading-copy">
+                        <span className={styles.panelKicker} data-testid="overview-spend-kicker">Monday to Sunday</span>
+                        <h2 className={styles.panelTitle} id="overview-spend-heading" data-testid="overview-spend-heading">Weekly spend</h2>
+                      </div>
+                      <strong className={styles.spendTotal} data-testid="overview-weekly-spend-total">{formatAud(weeklySpend.totalCents)}</strong>
+                    </div>
+                    {overviewHistoryStatus === 'ready' && weeklySpend.totalCents === 0 ? <p className={styles.emptyCopy} data-testid="overview-spend-empty">No completed outgoing activity this week.</p> : null}
+                    <div className={styles.spendChart} aria-label="Outgoing spend by day" data-testid="overview-spend-chart">
+                      {weeklySpend.days.map((day) => (
+                        <div className={styles.spendDay} key={day.dateKey} data-testid={`overview-weekday-${day.dateKey}`}>
+                          <span className={styles.spendValue} data-testid={`overview-weekday-value-${day.dateKey}`}>{formatAud(day.amountCents)}</span>
+                          <span className={styles.spendTrack} aria-hidden="true" data-testid={`overview-weekday-track-${day.dateKey}`}>
+                            <span className={styles.spendBar} style={{ height: `${Math.max(day.amountCents === 0 ? 0 : 10, Math.round((day.amountCents / maximumDailySpend) * 100))}%` }} data-testid={`overview-weekday-bar-${day.dateKey}`} />
+                          </span>
+                          <span className={styles.spendLabel} data-testid={`overview-weekday-label-${day.dateKey}`}>{day.label}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+                </div>
+              </section>
+            ) : null}
             {activeView === 'delay-simulator' ? (
               <section className={styles.viewPanel} aria-labelledby="delay-simulator-heading" data-testid="dashboard-view-delay-simulator">
                 <p className={styles.eyebrow} data-testid="delay-simulator-eyebrow">Test controls</p>
