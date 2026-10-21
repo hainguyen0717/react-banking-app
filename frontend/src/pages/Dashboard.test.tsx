@@ -160,6 +160,18 @@ describe('Dashboard navigation', () => {
     expect(screen.getByTestId('dashboard-mobile-drawer-close')).toHaveFocus();
     expect(within(drawer).getByTestId('dashboard-mobile-send-money')).toHaveAttribute('href', '/dashboard?view=transfer');
     expect(within(drawer).getAllByTestId(/^dashboard-mobile-nav-(?!group)/)).toHaveLength(11);
+    const mobileGroupExpectations = [
+      ['primary', 'Primary', 5],
+      ['manage', 'Manage', 4],
+      ['settings', 'Settings', 2],
+    ] as const;
+    for (const [groupId, label, linkCount] of mobileGroupExpectations) {
+      const group = within(drawer).getByTestId(`dashboard-mobile-nav-group-${groupId}`);
+      const heading = within(group).getByRole('heading', { name: label });
+      expect(group).toHaveAttribute('aria-labelledby', `dashboard-mobile-nav-group-${groupId}-label`);
+      expect(heading).toBe(within(drawer).getByTestId(`dashboard-mobile-nav-group-${groupId}-label`));
+      expect(within(group).getAllByRole('link')).toHaveLength(linkCount);
+    }
     fireEvent.keyDown(drawer, { key: 'Escape' });
     expect(screen.queryByTestId('dashboard-mobile-drawer')).not.toBeInTheDocument();
     await waitFor(() => expect(trigger).toHaveFocus());
@@ -682,10 +694,12 @@ describe('Dashboard banking functions', () => {
     expect(screen.getByTestId('dashboard-nav-cards')).toHaveAttribute('aria-current', 'page');
     expect(screen.getByTestId('card-masked-number-card-1')).toHaveTextContent('•••• 1234');
     expect(screen.getAllByTestId(/^card-transaction-row-/)).toHaveLength(5);
-    fireEvent.click(screen.getByTestId('card-disable-card-1'));
+    const disableTrigger = screen.getByTestId('card-disable-card-1');
+    fireEvent.click(disableTrigger);
     expect(screen.getByRole('alertdialog', { name: /disable this card permanently/i })).toBeInTheDocument();
     const cancel = screen.getByTestId('card-disable-cancel-card-1');
     const confirm = screen.getByTestId('card-disable-confirm-card-1');
+    expect(disableTrigger.className).toBe(confirm.className);
     expect(cancel).toHaveFocus();
     fireEvent.keyDown(cancel, { key: 'Tab', shiftKey: true });
     expect(confirm).toHaveFocus();

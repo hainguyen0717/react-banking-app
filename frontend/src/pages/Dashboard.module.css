@@ -1,7 +1,11 @@
 .shell {
   min-height: 100dvh;
   overflow-x: clip;
-  background: var(--dashboard-background);
+  background:
+    radial-gradient(circle at 12% 0%, rgba(134, 188, 37, 0.055), transparent 30rem), /* taste-skill-ignore: subtle DBank atmosphere makes the requested translucency visible */
+    radial-gradient(circle at 88% 18%, rgba(255, 255, 255, 0.035), transparent 34rem), /* taste-skill-ignore: subtle DBank atmosphere makes the requested translucency visible */
+    linear-gradient(145deg, var(--dashboard-background), #080808 52%, #020202); /* taste-skill-ignore: subtle DBank atmosphere makes the requested translucency visible */
+  background-attachment: fixed;
   color: var(--dashboard-foreground);
 }
 
@@ -17,13 +21,12 @@
 .sidebarBrand { height: 4.75rem; display: flex; align-items: center; padding-inline: 0.75rem; }
 .brand, .brandDot { font-size: 2rem; font-weight: 600; letter-spacing: -0.055em; line-height: 1; }
 .brandDot { color: var(--dashboard-accent); }
-.sidebarMenu { margin-top: 1rem; background: var(--dashboard-surface-fallback); border-radius: var(--radius-card); }
+.sidebarMenu { margin-top: 1rem; border: 1px solid var(--dashboard-border); border-radius: var(--radius-card); background: var(--dashboard-surface-fallback); }
 .functionNav { padding: 0.75rem; }
-.navGroup + .navGroup { margin-top: 1.25rem; }
-.navGroupLabel { margin: 0 0 0.5rem 0.75rem; color: var(--dashboard-faint); font-size: 0.75rem; font-weight: 500; }
-.navList { display: grid; gap: 0.125rem; margin: 0; padding: 0; list-style: none; }
+.navGroup + .navGroup { margin-top: 1.25rem; padding-top: 1.25rem; border-top: 1px solid var(--dashboard-border); }
+.navGroupLabel { margin: 0 0 0.625rem 0.75rem; color: var(--dashboard-faint); font-size: 0.75rem; font-weight: 600; line-height: 1.2; }
+.navList { display: grid; gap: 0.125rem; margin: 0; padding: 0 0 0 0.25rem; list-style: none; }
 .navLink { min-height: 2.25rem; display: flex; align-items: center; padding: 0.45rem 0.75rem; border-radius: var(--radius-control); color: var(--dashboard-muted-foreground); font-size: 0.875rem; font-weight: 500; text-decoration: none; transition: background-color var(--dashboard-motion), color var(--dashboard-motion); }
-.navLink:hover { background: var(--dashboard-raised); color: var(--dashboard-foreground); }
 .navLink[aria-current='page'] { background: var(--dashboard-active); color: #fff; }
 .sidebarCustomer { display: grid; gap: 0.65rem; padding: 1rem 1.25rem 1.25rem; border-top: 1px solid var(--dashboard-border); }
 .customerName { color: var(--dashboard-foreground); font-size: 0.875rem; font-weight: 600; overflow-wrap: anywhere; }
@@ -40,12 +43,11 @@
 .actionTitle, .panelTitle { margin: 0; font-size: 1.125rem; font-weight: 600; letter-spacing: -0.015em; }
 .viewHeader .actionCopy { margin: 0.35rem 0 0; }
 .sectionHeading { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
-.primaryAction, .primaryButton { min-height: 2.5rem; display: inline-flex; align-items: center; justify-content: center; padding: 0.6rem 1rem; border: 1px solid var(--dashboard-accent); border-radius: var(--radius-control); background: var(--dashboard-accent); color: var(--dashboard-on-accent); font: inherit; font-weight: 700; text-decoration: none; cursor: pointer; }
-.primaryAction:hover, .primaryButton:hover:not(:disabled) { background: var(--dashboard-accent-strong); border-color: var(--dashboard-accent-strong); }
+.primaryAction, .primaryButton { min-height: 2.5rem; display: inline-flex; align-items: center; justify-content: center; padding: 0.6rem 1rem; border: 1px solid var(--dashboard-accent); border-radius: var(--radius-control); background: var(--dashboard-accent); color: var(--dashboard-on-accent); font: inherit; font-weight: 700; text-decoration: none; cursor: pointer; transition: background-color var(--dashboard-motion), border-color var(--dashboard-motion); }
 .primaryButton:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .overviewTopGrid, .overviewLowerGrid { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(18rem, 1fr); gap: 1rem; align-items: stretch; }
-.overviewPanel, .accountCard, .actionCard, .emptyState, .reviewCard, .receiptCard, .paymentContext { min-width: 0; padding: 1.25rem; border-radius: var(--radius-card); background: var(--dashboard-surface-fallback); }
+.overviewPanel, .accountCard, .actionCard, .emptyState, .reviewCard, .receiptCard, .paymentContext { min-width: 0; padding: 1.25rem; border: 1px solid var(--dashboard-border); border-radius: var(--radius-card); background: var(--dashboard-surface-fallback); }
 .balancePanel, .featuredCardPanel { min-height: 10.75rem; }
 .balancePanel { display: flex; flex-direction: column; justify-content: space-between; }
 .panelHeading { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; }
@@ -63,8 +65,7 @@
 .cardEmpty { min-height: 6rem; display: grid; place-content: center; gap: 0.4rem; text-align: center; color: var(--dashboard-muted-foreground); }
 
 .activityList { display: grid; margin-top: 0.75rem; }
-.activityRow { min-height: 3.5rem; display: grid; grid-template-columns: 1.75rem minmax(0, 1fr) auto; align-items: center; gap: 0.75rem; padding: 0.55rem 0; border-top: 1px solid var(--dashboard-border); color: inherit; text-decoration: none; }
-.activityRow:hover .activityCopy strong { color: var(--dashboard-accent); }
+.activityRow { min-height: 3.5rem; display: grid; grid-template-columns: 1.75rem minmax(0, 1fr) auto; align-items: center; gap: 0.75rem; padding: 0.55rem 0; border-top: 1px solid var(--dashboard-border); border-radius: var(--radius-control); color: inherit; text-decoration: none; transition: background-color var(--dashboard-motion), color var(--dashboard-motion); }
 .activitySent, .activityReceived { color: var(--dashboard-muted-foreground); font-size: 1.125rem; font-weight: 700; }
 .activityReceived { color: var(--dashboard-accent); }
 .activityCopy { min-width: 0; display: grid; gap: 0.1rem; }
@@ -92,8 +93,7 @@
 .accountBalanceRow { display: grid; justify-items: end; gap: 0.1rem; }
 .balanceLabel { color: var(--dashboard-muted-foreground); font-size: 0.75rem; }
 .accountBalance { font-size: 1.125rem; }
-.historyButton, .logoutButton, .refreshButton, .cardOpenToggle, .cardActions button, .reviewActions button:not(.primaryButton), .bannerLink, .bannerReset { min-height: 2.5rem; padding: 0.55rem 0.85rem; border: 1px solid var(--dashboard-control); border-radius: var(--radius-control); background: transparent; color: var(--dashboard-foreground); font: inherit; font-size: 0.875rem; font-weight: 600; cursor: pointer; }
-.historyButton:hover, .logoutButton:hover, .refreshButton:hover, .cardOpenToggle:hover, .cardActions button:hover:not(:disabled) { border-color: var(--dashboard-border-strong); background: var(--dashboard-raised); }
+.historyButton, .logoutButton, .refreshButton, .cardOpenToggle, .cardActions button, .reviewActions button:not(.primaryButton), .bannerLink, .bannerReset { min-height: 2.5rem; padding: 0.55rem 0.85rem; border: 1px solid var(--dashboard-control); border-radius: var(--radius-control); background: transparent; color: var(--dashboard-foreground); font: inherit; font-size: 0.875rem; font-weight: 600; cursor: pointer; transition: background-color var(--dashboard-motion), border-color var(--dashboard-motion), color var(--dashboard-motion); }
 .transactions { grid-column: 1 / -1; margin-top: 0.25rem; border-top: 1px solid var(--dashboard-border); }
 .transactionRow { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; padding: 0.75rem 0; border-bottom: 1px solid var(--dashboard-border); }
 .transactionRow:last-child { border-bottom: 0; }
@@ -112,7 +112,7 @@
 .input:disabled { opacity: 0.5; cursor: not-allowed; }
 .methodSelector { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.5rem; margin: 0; padding: 0; border: 0; }
 .methodSelector legend { margin-bottom: 0.4rem; }
-.methodOption, .methodSelected { min-height: 2.75rem; display: flex; align-items: center; gap: 0.5rem; padding: 0.55rem 0.7rem; border: 1px solid var(--dashboard-control); border-radius: var(--radius-control); background: #0b0b0b; color: var(--dashboard-muted-foreground); cursor: pointer; font-size: 0.875rem; font-weight: 500; }
+.methodOption, .methodSelected { min-height: 2.75rem; display: flex; align-items: center; gap: 0.5rem; padding: 0.55rem 0.7rem; border: 1px solid var(--dashboard-control); border-radius: var(--radius-control); background: #0b0b0b; color: var(--dashboard-muted-foreground); cursor: pointer; font-size: 0.875rem; font-weight: 500; transition: background-color var(--dashboard-motion), border-color var(--dashboard-motion), color var(--dashboard-motion); }
 .methodSelected { border-color: var(--dashboard-border-strong); background: var(--dashboard-active); color: var(--dashboard-foreground); }
 .methodOption:focus-within, .methodSelected:focus-within { outline: 2px solid var(--dashboard-focus); outline-offset: 2px; }
 .reviewList { display: grid; margin: 1rem 0; }
@@ -140,17 +140,87 @@
 .cardOpenToggle { justify-self: start; }
 .confirmBackdrop, .mobileDrawerBackdrop { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; padding: 1rem; background: rgba(0, 0, 0, 0.86); }
 .confirmBackdrop { display: grid; }
-.confirmDialog { width: min(100%, 28rem); max-height: calc(100dvh - 2rem); overflow: auto; padding: 1.25rem; border-radius: var(--radius-card); background: var(--dashboard-raised); box-shadow: var(--dashboard-shadow-md); }
+.confirmDialog { width: min(100%, 28rem); max-height: calc(100dvh - 2rem); overflow: auto; padding: 1.25rem; border: 1px solid var(--dashboard-border-strong); border-radius: var(--radius-card); background: var(--dashboard-surface-fallback); box-shadow: var(--dashboard-shadow-md); }
 .confirmDialog h3 { margin-top: 0; }
-.destructiveButton { color: var(--dashboard-danger) !important; }
+.cardActions .destructiveButton { border-color: var(--dashboard-danger); color: var(--dashboard-danger); }
 
-.delayBanner { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 1rem 1.25rem; border-radius: var(--radius-card); background: var(--dashboard-raised); }
+.delayBanner { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 1rem 1.25rem; border: 1px solid var(--dashboard-border); border-radius: var(--radius-card); background: var(--dashboard-surface-fallback); }
 .delayBannerCopy { display: grid; gap: 0.2rem; color: var(--dashboard-muted-foreground); font-size: 0.8125rem; }
 .delayBannerActions { margin: 0; }
 .bannerLink { display: inline-flex; align-items: center; text-decoration: none; }
 
+@media (hover: hover) and (pointer: fine) {
+  .navLink:not([aria-current='page']):hover,
+  .mobileNavGroup a:not([aria-current='page']):hover {
+    background: var(--dashboard-accent-hover-background);
+    color: var(--dashboard-accent-hover-foreground);
+  }
+
+  .primaryAction:hover,
+  .primaryButton:hover:not(:disabled),
+  .mobileSendMoney:hover {
+    border-color: var(--dashboard-accent-strong);
+    background: var(--dashboard-accent-strong);
+  }
+
+  .activityRow:hover {
+    background: var(--dashboard-accent-hover-background);
+    color: var(--dashboard-accent-hover-foreground);
+  }
+
+  .historyButton:hover,
+  .logoutButton:hover,
+  .refreshButton:hover,
+  .cardOpenToggle:hover,
+  .cardActions button:hover:not(:disabled),
+  .reviewActions button:not(.primaryButton):hover:not(:disabled),
+  .bannerLink:hover,
+  .bannerReset:hover:not(:disabled),
+  .mobileMenuToggle:hover,
+  .mobileDrawerHeader button:hover,
+  .mobileDrawerCustomer button:hover {
+    border-color: var(--dashboard-accent-hover-border);
+    background: var(--dashboard-accent-hover-background);
+    color: var(--dashboard-accent-hover-foreground);
+  }
+
+  .methodOption:hover {
+    border-color: var(--dashboard-accent-hover-border);
+    background: var(--dashboard-accent-hover-background);
+    color: var(--dashboard-accent-hover-foreground);
+  }
+
+  .cardActions .destructiveButton:hover:not(:disabled) {
+    border-color: var(--dashboard-danger-hover-border);
+    background: var(--dashboard-danger-hover-background);
+    color: var(--dashboard-danger-hover-foreground);
+  }
+}
+
 @supports ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
-  .balancePanel, .featuredCard { background: var(--dashboard-surface-glass); -webkit-backdrop-filter: blur(var(--dashboard-blur)) saturate(110%); backdrop-filter: blur(var(--dashboard-blur)) saturate(110%); }
+  .sidebarMenu,
+  .overviewPanel,
+  .accountCard,
+  .actionCard,
+  .emptyState,
+  .reviewCard,
+  .receiptCard,
+  .paymentContext,
+  .delayBanner,
+  .featuredCard {
+    border-color: var(--dashboard-glass-border);
+    background: var(--dashboard-surface-glass);
+    -webkit-backdrop-filter: blur(var(--dashboard-blur)) saturate(118%);
+    backdrop-filter: blur(var(--dashboard-blur)) saturate(118%);
+    box-shadow: inset 0 1px 0 var(--dashboard-glass-highlight);
+  }
+
+  .confirmDialog {
+    background: var(--dashboard-surface-glass-strong);
+    -webkit-backdrop-filter: blur(var(--dashboard-blur)) saturate(120%);
+    backdrop-filter: blur(var(--dashboard-blur)) saturate(120%);
+  }
+
   .confirmBackdrop, .mobileDrawerBackdrop { -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); }
 }
 
@@ -165,18 +235,35 @@
   .mobileDrawer { width: 100%; height: 100dvh; overflow: auto; padding: 1rem; background: #090909; }
   .mobileDrawerHeader { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
   .mobileDrawerHeader h2 { margin: 0; font-size: 1.25rem; }
-  .mobileSendMoney { min-height: 2.75rem; display: flex; align-items: center; justify-content: center; margin: 1.25rem 0; border-radius: var(--radius-control); background: var(--dashboard-accent); color: var(--dashboard-on-accent); font-weight: 700; text-decoration: none; }
+  .mobileSendMoney { min-height: 2.75rem; display: flex; align-items: center; justify-content: center; margin: 1.25rem 0; border: 1px solid var(--dashboard-accent); border-radius: var(--radius-control); background: var(--dashboard-accent); color: var(--dashboard-on-accent); font-weight: 700; text-decoration: none; transition: background-color var(--dashboard-motion), border-color var(--dashboard-motion); }
   .mobileFunctionNav { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; }
-  .mobileNavGroup { padding: 1rem; border-radius: var(--radius-card); background: var(--dashboard-surface-fallback); }
-  .mobileNavGroup h3 { margin: 0 0 0.5rem; color: var(--dashboard-faint); font-size: 0.75rem; }
-  .mobileNavGroup ul { display: grid; gap: 0.15rem; margin: 0; padding: 0; list-style: none; }
+  .mobileNavGroup { padding: 1rem; border: 1px solid var(--dashboard-border); border-radius: var(--radius-card); background: var(--dashboard-surface-fallback); }
+  .mobileNavGroupLabel { margin: 0; padding-bottom: 0.625rem; border-bottom: 1px solid var(--dashboard-border); color: var(--dashboard-faint); font-size: 0.75rem; font-weight: 600; line-height: 1.2; }
+  .mobileNavGroup ul { display: grid; gap: 0.15rem; margin: 0.5rem 0 0; padding: 0 0 0 0.25rem; list-style: none; }
   .mobileNavGroup a { min-height: 2.75rem; display: flex; align-items: center; padding: 0.5rem 0.65rem; border-radius: var(--radius-control); color: var(--dashboard-muted-foreground); text-decoration: none; }
   .mobileNavGroup a[aria-current='page'] { background: var(--dashboard-active); color: #fff; }
-  .mobileDrawerCustomer { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-top: 1rem; padding: 1rem; border-radius: var(--radius-card); background: var(--dashboard-surface-fallback); }
+  .mobileDrawerCustomer { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-top: 1rem; padding: 1rem; border: 1px solid var(--dashboard-border); border-radius: var(--radius-card); background: var(--dashboard-surface-fallback); }
   .main { padding: 1rem 1rem 2rem; }
   .dashboardLayout { grid-template-columns: 1fr; }
   .sidebar { display: none; }
   .viewHeader { min-height: 3.5rem; }
+
+  @supports ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+    .mobileHeader, .mobileDrawer {
+      border-color: var(--dashboard-glass-border);
+      background: var(--dashboard-surface-glass-strong);
+      -webkit-backdrop-filter: blur(var(--dashboard-blur)) saturate(120%);
+      backdrop-filter: blur(var(--dashboard-blur)) saturate(120%);
+    }
+
+    .mobileNavGroup, .mobileDrawerCustomer {
+      border-color: var(--dashboard-glass-border);
+      background: var(--dashboard-surface-glass);
+      -webkit-backdrop-filter: blur(var(--dashboard-blur)) saturate(118%);
+      backdrop-filter: blur(var(--dashboard-blur)) saturate(118%);
+      box-shadow: inset 0 1px 0 var(--dashboard-glass-highlight);
+    }
+  }
 }
 
 @media (max-width: 48rem) {

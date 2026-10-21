@@ -792,8 +792,8 @@ export function Dashboard() {
             <Link className={styles.mobileSendMoney} to="/dashboard?view=transfer" onClick={(event) => { closeMobileDrawer(false); handleDashboardNavigation(event, 'transfer', 'Send money'); }} data-testid="dashboard-mobile-send-money">Send money</Link>
             <nav className={styles.mobileFunctionNav} aria-label="Mobile dashboard functions" data-testid="dashboard-mobile-function-nav">
               {NAV_GROUPS.map((group) => (
-                <section className={styles.mobileNavGroup} key={group.id} data-testid={`dashboard-mobile-nav-group-${group.id}`}>
-                  <h3>{group.label}</h3>
+                <section className={styles.mobileNavGroup} aria-labelledby={`dashboard-mobile-nav-group-${group.id}-label`} key={group.id} data-testid={`dashboard-mobile-nav-group-${group.id}`}>
+                  <h3 className={styles.mobileNavGroupLabel} id={`dashboard-mobile-nav-group-${group.id}-label`} data-testid={`dashboard-mobile-nav-group-${group.id}-label`}>{group.label}</h3>
                   <ul>{group.items.map((item) => <li key={item.view}><Link to={`/dashboard?view=${item.view}`} aria-current={activeView === item.view ? 'page' : undefined} onClick={(event) => { closeMobileDrawer(false); handleDashboardNavigation(event, item.view, item.label); }} data-testid={`dashboard-mobile-nav-${item.view}`}>{item.label}</Link></li>)}</ul>
                 </section>
               ))}
@@ -1359,7 +1359,7 @@ export function Dashboard() {
                       <div className={styles.cardActions} data-testid={`card-actions-${card.id}`}>
                         {card.status === 'ACTIVE' ? <button type="button" disabled={cardInFlight !== null} onClick={() => void handleCardAction(card.id, 'lock')} data-testid={`card-lock-${card.id}`}>Temporarily lock</button> : null}
                         {card.status === 'LOCKED' ? <button type="button" disabled={cardInFlight !== null} onClick={() => void handleCardAction(card.id, 'unlock')} data-testid={`card-unlock-${card.id}`}>Unlock</button> : null}
-                        {card.status !== 'DISABLED' ? <button ref={(element) => { if (element) disableTriggerRefs.current.set(card.id, element); else disableTriggerRefs.current.delete(card.id); }} type="button" disabled={cardInFlight !== null} onClick={() => setDisableCardId(card.id)} data-testid={`card-disable-${card.id}`}>Disable permanently</button> : null}
+                        {card.status !== 'DISABLED' ? <button ref={(element) => { if (element) disableTriggerRefs.current.set(card.id, element); else disableTriggerRefs.current.delete(card.id); }} className={styles.destructiveButton} type="button" disabled={cardInFlight !== null} onClick={() => setDisableCardId(card.id)} data-testid={`card-disable-${card.id}`}>Disable permanently</button> : null}
                       </div>
                       <h4 data-testid={`card-transactions-heading-${card.id}`}>Sample card transactions</h4>
                       <div className={styles.transactions} data-testid={`card-transactions-${card.id}`}>
